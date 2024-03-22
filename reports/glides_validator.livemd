@@ -1,0 +1,156 @@
+# Glides Prediction Accuracy
+
+```elixir
+Mix.install(
+  [
+    {:csv, "~> 3.2"},
+    {:kino, "~> 0.12.0"},
+    {:ex_aws, "~> 2.5"},
+    {:ex_aws_s3, "~> 2.5"},
+    {:hackney, "~> 1.20"},
+    {:sweet_xml, "~> 0.7.4"},
+    {:timex, "~> 3.7"},
+    {:jason, "~> 1.4"},
+    {:jaxon, "~> 2.0"}
+  ],
+  config: [
+    ex_aws: [
+      access_key_id: System.get_env("LB_AWS_ACCESS_KEY_ID"),
+      secret_access_key: System.get_env("LB_AWS_SECRET_ACCESS_KEY"),
+      region: "us-east-1"
+    ]
+  ]
+)
+```
+
+## Load Data
+
+### README
+
+This
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+date = Kino.Input.date("Date", default: Date.utc_today() |> Date.add(-1))
+```
+
+```elixir
+# https://www.notion.so/mbta-downtown-crossing/Rethinking-Prediction-Accuracy-for-Glides-e99561127b01490689135ab6b70cd33c
+
+# Utility function to change an elixir date into a padded folder path: 
+pad = fn n -> if Integer.digits(n) |> length() < 2, do: "0#{n}", else: n end
+
+# Pull out the date, and split it apart:  
+date = Kino.Input.read(date)
+%{year: year, month: m, day: d} = date
+month = pad.(m)
+day = pad.(d)
+
+# Create the inferred start and end times: 
+{:ok, start_time} = Timex.parse("#{year}-#{month}-#{day}T02:00:00+00:00", "{RFC3339}")
+{:ok, end_time_pre} = Timex.parse("#{year}-#{month}-#{day}T01:59:59+00:00", "{RFC3339}")
+end_time = Timex.shift(end_time_pre, days: 1)
+
+# Create or clear tables in ETS: 
+if(:ets.whereis(:TripUpdates) != :undefined) do
+  :ets.delete_all_objects(:TripUpdates)
+else
+  :ets.new(:TripUpdates, [:named_table, :public])
+end
+
+if(:ets.whereis(:VehiclePositions) != :undefined) do
+  :ets.delete_all_objects(:VehiclePositions)
+else
+  :ets.new(:VehiclePositions, [:named_table, :public])
+end
+
+# Calculate the total number of 5-minute increments in a day
+total_increments = div(Timex.diff(end_time, start_time, :minutes), 5)
+
+# Create list of file prefixes for each 5-minute increment: 
+files =
+  Enum.map(0..total_increments, fn increment ->
+    adjusted_datetime =
+      Timex.add(start_time, %Timex.Duration{
+        seconds: increment * 5 * 60,
+        microseconds: 0,
+        megaseconds: 0
+      })
+
+    adjusted_day = pad.(adjusted_datetime.day)
+    {:ok, time} = Timex.format(adjusted_datetime, "%H:%M", :strftime)
+    file = "#{year}-#{month}-#{adjusted_day}T#{time}"
+    "#{year}/#{month}/#{adjusted_day}/#{file}"
+  end)
+
+# Function to download a VehiclePosition or TripUpdate file and load into ETS: 
+get_download_file_fn = fn table_name, file_prefix ->
+  fn remote_prefix ->
+    all_files =
+      ExAws.S3.list_objects("mbta-gtfs-s3", prefix: remote_prefix)
+      |> ExAws.stream!()
+      |> Enum.to_list()
+
+    remote_object =
+      Enum.find(all_files, fn x ->
+        String.contains?(x.key, "https_cdn.mbta.com_realtime_#{file_prefix}_enhanced.json")
+      end)
+
+    remote_path = remote_object.key
+    local_path = remote_path |> Path.split() |> Enum.take(-1)
+    IO.inspect("Downloading #{remote_path} to #{local_path}...")
+
+    ExAws.S3.download_file(
+      "mbta-gtfs-s3",
+      remote_path,
+      local_path
+    )
+    |> ExAws.request()
+
+    json_data =
+      File.stream!(local_path, [:compressed])
+      |> Jaxon.Stream.from_enumerable()
+
+    timestamp =
+      json_data
+      |> Jaxon.Stream.query([:root, "header", "timestamp"])
+      |> Enum.to_list()
+      |> List.first()
+
+    json_data
+    |> Jaxon.Stream.query([:root, "entity", :all])
+    |> Stream.each(fn obj ->
+      :ets.insert(table_name, {"#{timestamp}_#{obj["id"]}", obj})
+    end)
+    |> Stream.run()
+
+    {remote_path, local_path}
+  end
+end
+
+# Function to trigger the ETS load and create a UI element representing the table: 
+load_table = fn table_name, file_prefix ->
+  download_fn = get_download_file_fn.(table_name, file_prefix)
+  files |> Task.async_stream(download_fn, max_concurrency: 15) |> Stream.run()
+  Kino.ETS.new(table_name)
+end
+
+# Load both tables: 
+frame = Kino.Frame.new() |> Kino.render()
+
+table_ui =
+  [
+    load_table.(:TripUpdates, "TripUpdates"),
+    load_table.(:VehiclePositions, "VehiclePositions")
+  ]
+  |> Enum.each(fn table -> Kino.Frame.append(frame, table) end)
+```
+
+## Report Placeholder
+
+```elixir
+Kino.ETS.new(:VehiclePositions)
+```
+
+<!-- livebook:{"offset":4163,"stamp":{"token":"XCP.-dZnwBWXPTtoKW-A_RyPywcHFiQ2s_wi0g7dXCo_xbCnWg7EpNU6WYsODDSslORJhRUgyHvITZ1fd_UOvsEXMajVs0KxEpT4QyTrcOk2kC6T2z7oy0Ii0FuevZRFm8ys8SnWp0VNWl3TvFrm-My4VhvMFMqQqQ","version":2}} -->
