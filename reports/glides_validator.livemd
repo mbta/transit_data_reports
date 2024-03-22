@@ -27,7 +27,7 @@ Mix.install(
 
 ### README
 
-This
+This report provides an implementation of https://www.notion.so/mbta-downtown-crossing/Rethinking-Prediction-Accuracy-for-Glides-e99561127b01490689135ab6b70cd33c
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -36,7 +36,6 @@ date = Kino.Input.date("Date", default: Date.utc_today() |> Date.add(-1))
 ```
 
 ```elixir
-# https://www.notion.so/mbta-downtown-crossing/Rethinking-Prediction-Accuracy-for-Glides-e99561127b01490689135ab6b70cd33c
 
 # Utility function to change an elixir date into a padded folder path: 
 pad = fn n -> if Integer.digits(n) |> length() < 2, do: "0#{n}", else: n end
