@@ -3,6 +3,7 @@
 ```elixir
 Mix.install(
   [
+    {:atomic_map, "~> 0.9.3"},
     {:csv, "~> 3.2"},
     {:kino, "~> 0.12.0"},
     {:ex_aws, "~> 2.5"},
@@ -31,37 +32,75 @@ This report provides an implementation of https://www.notion.so/mbta-downtown-cr
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-date = Kino.Input.date("Date", default: Date.utc_today() |> Date.add(-1))
+yesterday_eastern = DateTime.now!("America/New_York") |> DateTime.to_date() |> Date.add(-1)
+date = Kino.Input.date("Date", default: yesterday_eastern)
+
+line =
+  Kino.Input.select("Line", [
+    {nil, "(Don't filter by line)"},
+    {"Green Line", "Green Line"},
+    {"Mattapan Line", "Mattapan Line"}
+  ])
+
+stop_id = Kino.Input.text("Stop ID")
+
+limit_to_next_2_predictions =
+  Kino.Input.checkbox(
+    "Consider next 2 predictions only (🐌 Slow if not paired with a Stop ID filter)"
+  )
+
+[date, line, stop_id, limit_to_next_2_predictions]
+|> Enum.each(&Kino.render/1)
 ```
 
 ```elixir
+###############
+# Read inputs #
+###############
 
-# Utility function to change an elixir date into a padded folder path: 
+date = Kino.Input.read(date)
+
+if is_nil(date) do
+  raise "A date must be selected."
+end
+
+line = Kino.Input.read(line)
+
+stop_id =
+  case Kino.Input.read(stop_id) do
+    "" -> nil
+    id -> id
+  end
+
+limit_to_next_2_predictions = Kino.Input.read(limit_to_next_2_predictions)
+
+#############################
+# Load data into ETS tables #
+#############################
+
+# Utility function to change an elixir date into a padded folder path:
 pad = fn n -> if Integer.digits(n) |> length() < 2, do: "0#{n}", else: n end
 
 # Pull out the date, and split it apart:  
-date = Kino.Input.read(date)
 %{year: year, month: m, day: d} = date
 month = pad.(m)
 day = pad.(d)
 
-# Create the inferred start and end times: 
+# Create the inferred start and end times:
+# TODO: Are these times right? 2am UTC is 10pm EDT...
 {:ok, start_time} = Timex.parse("#{year}-#{month}-#{day}T02:00:00+00:00", "{RFC3339}")
 {:ok, end_time_pre} = Timex.parse("#{year}-#{month}-#{day}T01:59:59+00:00", "{RFC3339}")
 end_time = Timex.shift(end_time_pre, days: 1)
 
-# Create or clear tables in ETS: 
-if(:ets.whereis(:TripUpdates) != :undefined) do
-  :ets.delete_all_objects(:TripUpdates)
-else
-  :ets.new(:TripUpdates, [:named_table, :public])
+# Create or clear tables in ETS:
+set_up_table = fn table ->
+  if :ets.whereis(table) != :undefined,
+    do: :ets.delete_all_objects(table),
+    else: :ets.new(table, [:named_table, :public])
 end
 
-if(:ets.whereis(:VehiclePositions) != :undefined) do
-  :ets.delete_all_objects(:VehiclePositions)
-else
-  :ets.new(:VehiclePositions, [:named_table, :public])
-end
+set_up_table.(:TripUpdates)
+set_up_table.(:VehiclePositions)
 
 # Calculate the total number of 5-minute increments in a day
 total_increments = div(Timex.diff(end_time, start_time, :minutes), 5)
@@ -83,20 +122,29 @@ files =
   end)
 
 # Function to download a VehiclePosition or TripUpdate file and load into ETS: 
-get_download_file_fn = fn table_name, file_prefix ->
-  fn remote_prefix ->
-    all_files =
-      ExAws.S3.list_objects("mbta-gtfs-s3", prefix: remote_prefix)
-      |> ExAws.stream!()
-      |> Enum.to_list()
+download_file = fn table_name, file_prefix, remote_prefix ->
+  all_files =
+    ExAws.S3.list_objects("mbta-gtfs-s3", prefix: remote_prefix)
+    |> ExAws.stream!()
+    |> Enum.to_list()
 
-    remote_object =
-      Enum.find(all_files, fn x ->
-        String.contains?(x.key, "https_cdn.mbta.com_realtime_#{file_prefix}_enhanced.json")
-      end)
+  remote_object =
+    Enum.find(all_files, fn x ->
+      String.contains?(x.key, "https_cdn.mbta.com_realtime_#{file_prefix}_enhanced.json")
+    end)
 
-    remote_path = remote_object.key
-    local_path = remote_path |> Path.split() |> Enum.take(-1)
+  remote_path = remote_object.key
+
+  # Files are downloaded to a temp directory.
+  local_path =
+    remote_path
+    |> Path.split()
+    |> Enum.take(-1)
+    |> then(&Path.join(System.tmp_dir!(), &1))
+
+  if File.exists?(local_path) do
+    IO.inspect("File already exists, skipping download: #{local_path}")
+  else
     IO.inspect("Downloading #{remote_path} to #{local_path}...")
 
     ExAws.S3.download_file(
@@ -105,32 +153,37 @@ get_download_file_fn = fn table_name, file_prefix ->
       local_path
     )
     |> ExAws.request()
-
-    json_data =
-      File.stream!(local_path, [:compressed])
-      |> Jaxon.Stream.from_enumerable()
-
-    timestamp =
-      json_data
-      |> Jaxon.Stream.query([:root, "header", "timestamp"])
-      |> Enum.to_list()
-      |> List.first()
-
-    json_data
-    |> Jaxon.Stream.query([:root, "entity", :all])
-    |> Stream.each(fn obj ->
-      :ets.insert(table_name, {"#{timestamp}_#{obj["id"]}", obj})
-    end)
-    |> Stream.run()
-
-    {remote_path, local_path}
   end
+
+  json_data =
+    File.stream!(local_path, [:compressed])
+    |> Jaxon.Stream.from_enumerable()
+
+  timestamp =
+    json_data
+    |> Jaxon.Stream.query([:root, "header", "timestamp"])
+    |> Enum.to_list()
+    |> List.first()
+
+  json_data
+  |> Jaxon.Stream.query([:root, "entity", :all])
+  |> Stream.each(fn obj ->
+    :ets.insert(
+      table_name,
+      {"#{timestamp}_#{obj["id"]}", AtomicMap.convert(obj, safe: false, underscore: false)}
+    )
+  end)
+  |> Stream.run()
+
+  {remote_path, local_path}
 end
 
 # Function to trigger the ETS load and create a UI element representing the table: 
 load_table = fn table_name, file_prefix ->
-  download_fn = get_download_file_fn.(table_name, file_prefix)
-  files |> Task.async_stream(download_fn, max_concurrency: 15) |> Stream.run()
+  files
+  |> Task.async_stream(&download_file.(table_name, file_prefix, &1), max_concurrency: 15)
+  |> Stream.run()
+
   Kino.ETS.new(table_name)
 end
 
@@ -145,10 +198,404 @@ table_ui =
   |> Enum.each(fn table -> Kino.Frame.append(frame, table) end)
 ```
 
-## Report Placeholder
+## Data Structure
 
 ```elixir
-Kino.ETS.new(:VehiclePositions)
+# Some typespecs to document the data structures we're working with.
+
+defmodule Common do
+  @moduledoc "Shared types."
+
+  @type stop_id :: String.t()
+  @type route_id :: String.t()
+  @type trip_id :: String.t()
+  @type vehicle_id :: String.t()
+
+  # Unix epoch timestamp
+  @type timestamp :: integer
+
+  # e.g. "20240603"
+  @type date_string :: String.t()
+
+  # e.g. "09:18:50"
+  @type time_string :: String.t()
+end
+
+defmodule TripUpdate do
+  @moduledoc "Structure of an entry in the :TripUpdates table."
+
+  @type t :: {key, value}
+
+  # Key is a string of the form "#{timestamp}_#{trip_update_id}"
+  # e.g. "1717524600_62216363"
+  # NB: This timestamp can be different from .trip_update.timestamp,
+  # it appears to be the time this snapshot was stored while
+  # .trip_update.timestamp is the time that the trip update was generated.
+  @type key :: String.t()
+
+  @type value :: %{
+          # Same ID as in the second part of key
+          # e.g. "62216363"
+          # This ID is the same for all trip updates relating to a given trip
+          # (So, can easily group them by this)
+          # 
+          # HOWEVER: vehicle can sometimes "go nil" or change for some of a trip's updates!
+          # This was the worst case I could find for 6/10:
+          # {"62044819", [{"y1636", "62044819"}, {"y1621", "62044819"}, {"y1632", "62044819"}, {nil, "62044819"}]}
+          #  ^ trip upd.    ^ veh.   ^ trip        ^ veh.   ^ trip        ...
+          # A single trip was served by 3 different vehicles (and also "went nil" which means... out of service?)
+          id: Common.trip_id(),
+          trip_update: %{
+            optional(:vehicle) => %{id: Common.vehicle_id()},
+            optional(:update_type) => update_type,
+            # Time at which this trip update was made.
+            # Field not present if trip.schedule_relationship is "CANCELED"
+            # Field not present if update_type is "reverse_trip"
+            optional(:timestamp) => Commmon.timestamp(),
+            # Field not present if trip.schedule_relationship is "CANCELED"
+            optional(:stop_time_update) => [
+              %{
+                # Field not present if schedule_relationship is "SKIPPED"
+                optional(:departure) => %{time: Commmon.timestamp(), uncertainty: integer},
+                # Field not present if schedule_relationship is "SKIPPED"
+                optional(:arrival) => %{time: Commmon.timestamp(), uncertainty: integer},
+                optional(:schedule_relationship) => stop_time_schedule_relationship,
+                stop_id: Commmon.stop_id(),
+                # index of this stop in the sequence, starting with 1
+                stop_sequence: pos_integer
+              }
+            ],
+            trip: %{
+              optional(:schedule_relationship) => trip_schedule_relationship,
+              trip_id: Commmon.trip_id(),
+              direction_id: 0 | 1,
+              last_trip: boolean,
+              revenue: boolean,
+              route_id: Commmon.route_id(),
+              start_date: Commmon.date_string(),
+              start_time: Commmon.time_string()
+            }
+          }
+        }
+
+  # "mid_trip" | "reverse_trip" | "at_terminal"
+  @type update_type :: String.t()
+
+  @type trip_update_id :: String.t()
+
+  # "CANCELED" | "ADDED"
+  @type trip_schedule_relationship :: String.t()
+
+  # "SKIPPED"
+  @type stop_time_schedule_relationship :: String.t()
+end
+
+defmodule VehiclePosition do
+  @moduledoc "Structure of an entry in the :VehiclePositions table."
+
+  @type t :: {key, value}
+
+  # Key is a string of the form "#{timestamp}_#{vehicle_id}"
+  # e.g. "1717471500_G-10351"
+  @type key :: String.t()
+
+  @type value :: %{
+          # Same ID as in the second part of key
+          # e.g. "G-10351"
+          id: Common.vehicle_id(),
+          vehicle: %{
+            optional(:stop_id) => Commmon.stop_id(),
+            # unused for this report
+            optional(:multi_carriage_details) => [
+              %{
+                # index of this carriage in the sequence, starting with 1
+                carriage_sequence: pos_integer,
+                # carriage ID maybe?
+                label: String.t(),
+                occupancy_status: occupancy_status,
+                orientation: carriage_orientation
+              }
+            ],
+            current_status: status,
+            # index of the stop it's at or approaching
+            current_stop_sequence: integer,
+            # unused for this report
+            position: %{
+              # compass direction in degrees
+              bearing: integer,
+              latitude: float,
+              longitude: float,
+              speed: float
+            },
+            timestamp: Commmon.timestamp(),
+            trip: %{
+              direction_id: 0 | 1,
+              last_trip: boolean,
+              revenue: boolean,
+              route_id: Commmon.route_id(),
+              schedule_relationship: String.t(),
+              start_date: Commmon.date_string(),
+              start_time: Commmon.time_string(),
+              trip_id: Commmon.trip_id()
+            },
+            vehicle: %{
+              id: Common.vehicle_id(),
+              # Formed by joining multi_carriage_details[].label with "-"
+              # e.g. "3682-3849"
+              label: String.t()
+            }
+          }
+        }
+
+  # "IN_TRANSIT_TO" | "STOPPED_AT" | "INCOMING_AT"
+  @type status :: String.t()
+
+  # "NO_DATA_AVAILABLE" | "STANDING_ROOM_ONLY" | "FEW_SEATS_AVAILABLE"
+  # | "MANY_SEATS_AVAILABLE" | "CRUSHED_STANDING_ROOM_ONLY"
+  @type occupancy_status :: String.t()
+
+  # "AB" | "BA"
+  @type carriage_orientation :: String.t()
+end
 ```
 
-<!-- livebook:{"offset":4163,"stamp":{"token":"XCP.-dZnwBWXPTtoKW-A_RyPywcHFiQ2s_wi0g7dXCo_xbCnWg7EpNU6WYsODDSslORJhRUgyHvITZ1fd_UOvsEXMajVs0KxEpT4QyTrcOk2kC6T2z7oy0Ii0FuevZRFm8ys8SnWp0VNWl3TvFrm-My4VhvMFMqQqQ","version":2}} -->
+## Data mashing
+
+### First, some utility functions:
+
+```elixir
+# Streams all values from an ETS table. (Assuming table's objects are {key, value} 2-tuples)
+stream_values = fn table ->
+  :ets.first(table)
+  |> Stream.iterate(fn key -> :ets.next(table, key) end)
+  |> Stream.take_while(fn key -> key != :"$end_of_table" end)
+  |> Stream.map(fn key -> :ets.lookup_element(table, key, 2) end)
+end
+
+on_line? =
+  case line do
+    "Green Line" -> fn route_id -> String.starts_with?(route_id, "Green-") end
+    "Mattapan Line" -> fn route_id -> route_id == "Mattapan" end
+    nil -> fn _ -> true end
+  end
+```
+
+### Filter Vehicle Positions
+
+```elixir
+# QUESTION: Can we assume that we'll always have a data point for a vehicle
+# being stopped_at each stop it serves?
+# Or do we need to do some inference:
+# - it was incoming_at before,
+# - now it's in_transit_to the next stop,
+# - therefore it must have stopped at this stop between data snapshots
+valid_vehicle_position? = fn ve_pos ->
+  Enum.all?(
+    [
+      [:vehicle, :trip, :route_id],
+      [:vehicle, :trip, :trip_id],
+      [:vehicle, :current_status],
+      [:vehicle, :stop_id]
+    ],
+    &(not is_nil(get_in(ve_pos, &1)))
+  )
+end
+
+at_stop? =
+  if stop_id != nil do
+    fn status_stop -> match?({"STOPPED_AT", ^stop_id}, status_stop) end
+  else
+    fn _ -> true end
+  end
+
+vehicle_positions =
+  :VehiclePositions
+  |> stream_values.()
+  |> Stream.filter(valid_vehicle_position?)
+  # We only care about when a vehicle is stopped at a stop.
+  |> Stream.filter(&(&1.vehicle.current_status == "STOPPED_AT"))
+  |> Stream.filter(fn ve_pos -> on_line?.(ve_pos.vehicle.trip.route_id) end)
+  |> Stream.filter(fn ve_pos ->
+    at_stop?.({ve_pos.vehicle.current_status, ve_pos.vehicle.stop_id})
+  end)
+```
+
+### Filter trip updates
+
+```elixir
+valid_trip_update? = fn tr_upd ->
+  Enum.all?(
+    [
+      [:trip_update, :trip, :route_id],
+      [:trip_update, :stop_time_update, Access.all(), :stop_id],
+      [:trip_update, :timestamp]
+    ],
+    &(not is_nil(get_in(tr_upd, &1)))
+  )
+end
+
+# Removes, from a trip update's stop_time_update, all entries that don't apply to the target stop.
+# Returns nil if trip update doesn't contain the target stop anywhere in its stop_time_update.
+filter_stops_by_stop_id =
+  if stop_id != nil do
+    fn tr_upd ->
+      tr_upd.trip_update.stop_time_update
+      |> Enum.find(&(&1.stop_id == stop_id))
+      |> case do
+        nil ->
+          nil
+
+        target_stop_time_update ->
+          put_in(tr_upd.trip_update.stop_time_update, [target_stop_time_update])
+      end
+    end
+  else
+    &Function.identity/1
+  end
+
+filter_stops = fn tr_upd ->
+  tr_upd
+  |> filter_stops_by_stop_id.()
+  |> case do
+    nil ->
+      nil
+
+    tr_upd ->
+      update_in(tr_upd.trip_update.stop_time_update, fn stop_time_update ->
+        Enum.reject(stop_time_update, &is_nil(get_in(&1, [:departure, :time])))
+      end)
+  end
+end
+
+# do_clamp = fn trip_updates, _stop_id ->
+#   # Next 2 predictions:
+#   # First, group trip updates by timestamp.
+#   trip_updates
+#   |> Enum.group_by()
+#   # Apply to a stop. So group predictions by stop
+#   # Each stop gets 2 predictions
+
+# end
+
+# clamp_to_next_2_predictions =
+#   if limit_to_next_2_predictions do
+#     &do_clamp.(&1, stop_id)
+#   else
+#     &Function.identity/1
+#   end
+
+trip_updates =
+  :TripUpdates
+  |> stream_values.()
+  |> Stream.filter(valid_trip_update?)
+  # Apply line filter
+  |> Stream.filter(fn tr_upd -> on_line?.(tr_upd.trip_update.trip.route_id) end)
+  # Filter each trip update's stop_time_update list.
+  # If a stop filter is set, apply it.
+  # Also remove any entries that don't have a .departure.time value.
+  # If filtered list is empty for any trip update, the trip update is removed entirely.
+  |> Stream.map(filter_stops)
+  |> Stream.reject(&is_nil/1)
+
+# TODO: Apply next-2-predictions filter
+# -> This is very hard! <-
+# Trip updates come in at varying intervals, even for a single stop x trip
+# The only way to do this, afaik, is to simulate a countdown clock at the station,
+# starting from up to 2 trip updates before the trip arrives, to when it arrives.
+# And repeat for all trips (x multiple stations if not filtered)
+# |> Enum.group_by(& &1.id, & &1.trip_update.timestamp)
+# |> Enum.flat_map(fn {_trip_id, times} ->
+#   times
+#   |> Enum.sort()
+#   |> Enum.chunk_every(2, 1, :discard)
+#   |> Enum.map(fn [t1, t2] -> t2 - t1 end)
+# end)
+# |> Enum.frequencies()
+# |> Enum.min_max()
+# |> Enum.sort()
+# |> Enum.chunk_every(2, 1, :discard)
+# |> Enum.map(fn [t1, t2] -> t2 - t1 end)
+# |> Enum.frequencies()
+# |> Enum.sort()
+# |> Enum.unzip()
+# |> clamp_to_next_2_predictions()
+```
+
+## Per-Hour Counts of trips for which RTR made departure predictions vs. actual departures
+
+```elixir
+unix_timestamp_to_local_hour = fn timestamp ->
+  timestamp
+  |> DateTime.from_unix!()
+  |> DateTime.shift_zone!("America/New_York")
+  |> then(& &1.hour)
+end
+
+predicted_departures_by_hour =
+  trip_updates
+  # Group by hour of the predicted departure (not hour the prediction was generated!), in local time
+  |> Stream.flat_map(fn tr_upd ->
+    Enum.map(
+      tr_upd.trip_update.stop_time_update,
+      &%{id: tr_upd.id, hour: unix_timestamp_to_local_hour.(&1.departure.time)}
+    )
+  end)
+  |> Enum.group_by(& &1.hour, & &1.id)
+  |> Map.new(fn {hour, trip_ids} -> {hour, MapSet.new(trip_ids)} end)
+
+# |> IO.inspect(label: "predicted")
+
+actual_departures_by_hour =
+  vehicle_positions
+  |> Enum.group_by(
+    &unix_timestamp_to_local_hour.(&1.vehicle.timestamp),
+    & &1.vehicle.trip.trip_id
+  )
+  |> Map.new(fn {hour, trip_ids} -> {hour, MapSet.new(trip_ids)} end)
+
+# |> IO.inspect(label: "actual")
+
+0..23
+|> Enum.map(
+  &%{
+    "hour" => &1,
+    "predicted_trip_count" =>
+      Map.get(predicted_departures_by_hour, &1, MapSet.new()) |> MapSet.size(),
+    "actual_trip_count" => Map.get(actual_departures_by_hour, &1, MapSet.new()) |> MapSet.size()
+  }
+)
+|> Kino.DataTable.new(keys: ["hour", "predicted_trip_count", "actual_trip_count"])
+
+# TODO: Rotate results so they start at beginning of the service day, rather than midnight?
+```
+
+## Per-Hour % of trips for which RTR made departure predictions vs. actual departures
+
+```elixir
+0..23
+|> Enum.map(fn hour ->
+  predicted_departures = Map.get(predicted_departures_by_hour, hour, MapSet.new())
+  actual_departures = Map.get(actual_departures_by_hour, hour, MapSet.new())
+
+  actual_departures_with_predictions =
+    MapSet.intersection(predicted_departures, actual_departures)
+
+  actual_departure_count = MapSet.size(actual_departures)
+  actual_departure_with_prediction_count = MapSet.size(actual_departures_with_predictions)
+
+  percentage =
+    if actual_departure_count > 0 do
+      100.0 * (actual_departure_with_prediction_count / actual_departure_count)
+    else
+      "N/A (0 actual departures)"
+    end
+
+  %{
+    "hour" => hour,
+    "% of actual trips that had predictions" => percentage
+  }
+end)
+|> Kino.DataTable.new(keys: ["hour", "% of actual trips that had predictions"])
+```
+
+<!-- livebook:{"offset":17811,"stamp":{"token":"XCP.mZ1Nsf5v2N9Dov8XFEnr_o70BQAkargTY0vaxQZKM0Nw_vXCEY8M_YCxpx0Zd_DpyXHS1bOCgaw-W0E8IAzWza0Rb_9BEkA1hZ6LblkX7zT2qP4WnesDlG9iL8puQAvStycxUFqen5d6i4mw8oqKNc4MPxhQ2w","version":2}} -->
