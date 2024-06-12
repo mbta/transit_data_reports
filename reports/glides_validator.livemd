@@ -86,8 +86,11 @@ pad = fn n -> if Integer.digits(n) |> length() < 2, do: "0#{n}", else: n end
 month = pad.(m)
 day = pad.(d)
 
+# QUESTION:
+# Are these times right?
+# This is what the starter notebook had, but 2am UTC is 10pm EDT...
+#
 # Create the inferred start and end times:
-# TODO: Are these times right? 2am UTC is 10pm EDT...
 {:ok, start_time} = Timex.parse("#{year}-#{month}-#{day}T02:00:00+00:00", "{RFC3339}")
 {:ok, end_time_pre} = Timex.parse("#{year}-#{month}-#{day}T01:59:59+00:00", "{RFC3339}")
 end_time = Timex.shift(end_time_pre, days: 1)
@@ -226,7 +229,7 @@ defmodule TripUpdate do
 
   @type t :: {key, value}
 
-  # Key is a string of the form "#{timestamp}_#{trip_update_id}"
+  # Key is a string of the form "#{timestamp}_#{trip_id}"
   # e.g. "1717524600_62216363"
   # NB: This timestamp can be different from .trip_update.timestamp,
   # it appears to be the time this snapshot was stored while
@@ -234,21 +237,12 @@ defmodule TripUpdate do
   @type key :: String.t()
 
   @type value :: %{
-          # Same ID as in the second part of key
-          # e.g. "62216363"
-          # This ID is the same for all trip updates relating to a given trip
-          # (So, can easily group them by this)
-          # 
-          # HOWEVER: vehicle can sometimes "go nil" or change for some of a trip's updates!
-          # This was the worst case I could find for 6/10:
-          # {"62044819", [{"y1636", "62044819"}, {"y1621", "62044819"}, {"y1632", "62044819"}, {nil, "62044819"}]}
-          #  ^ trip upd.    ^ veh.   ^ trip        ^ veh.   ^ trip        ...
-          # A single trip was served by 3 different vehicles (and also "went nil" which means... out of service?)
+          # ID of trip being updated.
           id: Common.trip_id(),
           trip_update: %{
             optional(:vehicle) => %{id: Common.vehicle_id()},
             optional(:update_type) => update_type,
-            # Time at which this trip update was made.
+            # Time at which this trip update was generated.
             # Field not present if trip.schedule_relationship is "CANCELED"
             # Field not present if update_type is "reverse_trip"
             optional(:timestamp) => Commmon.timestamp(),
@@ -401,7 +395,7 @@ valid_vehicle_position? = fn ve_pos ->
   )
 end
 
-at_stop? =
+vehicle_at_stop? =
   if stop_id != nil do
     fn status_stop -> match?({"STOPPED_AT", ^stop_id}, status_stop) end
   else
@@ -416,7 +410,7 @@ vehicle_positions =
   |> Stream.filter(&(&1.vehicle.current_status == "STOPPED_AT"))
   |> Stream.filter(fn ve_pos -> on_line?.(ve_pos.vehicle.trip.route_id) end)
   |> Stream.filter(fn ve_pos ->
-    at_stop?.({ve_pos.vehicle.current_status, ve_pos.vehicle.stop_id})
+    vehicle_at_stop?.({ve_pos.vehicle.current_status, ve_pos.vehicle.stop_id})
   end)
 ```
 
@@ -467,23 +461,6 @@ filter_stops = fn tr_upd ->
   end
 end
 
-# do_clamp = fn trip_updates, _stop_id ->
-#   # Next 2 predictions:
-#   # First, group trip updates by timestamp.
-#   trip_updates
-#   |> Enum.group_by()
-#   # Apply to a stop. So group predictions by stop
-#   # Each stop gets 2 predictions
-
-# end
-
-# clamp_to_next_2_predictions =
-#   if limit_to_next_2_predictions do
-#     &do_clamp.(&1, stop_id)
-#   else
-#     &Function.identity/1
-#   end
-
 trip_updates =
   :TripUpdates
   |> stream_values.()
@@ -499,10 +476,21 @@ trip_updates =
 
 # TODO: Apply next-2-predictions filter
 # -> This is very hard! <-
-# Trip updates come in at varying intervals, even for a single stop x trip
-# The only way to do this, afaik, is to simulate a countdown clock at the station,
+# Trip updates come in at varying intervals, even for a single stop x trip.
+#
+# To know what would appear on a countdown clock, we have to maintain state over time.
+#
+# I.e., we would need to simulate a countdown clock at the station,
 # starting from up to 2 trip updates before the trip arrives, to when it arrives.
 # And repeat for all trips (x multiple stations if not filtered)
+#
+# Is there any other way to achieve this?
+
+# WIP/scratch code below from attempts at implementing next-2-predictions,
+# will come back to this and either clean up or finish implementing.
+#
+#
+#
 # |> Enum.group_by(& &1.id, & &1.trip_update.timestamp)
 # |> Enum.flat_map(fn {_trip_id, times} ->
 #   times
@@ -519,6 +507,23 @@ trip_updates =
 # |> Enum.sort()
 # |> Enum.unzip()
 # |> clamp_to_next_2_predictions()
+#
+# do_clamp = fn trip_updates, _stop_id ->
+#   # Next 2 predictions:
+#   # First, group trip updates by timestamp.
+#   trip_updates
+#   |> Enum.group_by()
+#   # Apply to a stop. So group predictions by stop
+#   # Each stop gets 2 predictions
+#
+# end
+#
+# clamp_to_next_2_predictions =
+#   if limit_to_next_2_predictions do
+#     &do_clamp.(&1, stop_id)
+#   else
+#     &Function.identity/1
+#   end
 ```
 
 ## Per-Hour Counts of trips for which RTR made departure predictions vs. actual departures
@@ -531,22 +536,32 @@ unix_timestamp_to_local_hour = fn timestamp ->
   |> then(& &1.hour)
 end
 
+# QUESTION:
+# Do we need to worry about cases where actual departure happened around the start/end of the hour?
+# Maybe give a little wiggle room into the next/previous hour, for predictions..?
+
 predicted_departures_by_hour =
   trip_updates
-  # Group by hour of the predicted departure (not hour the prediction was generated!), in local time
+  # Group by hour of the predicted departure (not hour the prediction was generated!),
+  # in local time.
+  # This requires splitting each trip update into its individual stop_time_update items.
   |> Stream.flat_map(fn tr_upd ->
     Enum.map(
       tr_upd.trip_update.stop_time_update,
-      &%{id: tr_upd.id, hour: unix_timestamp_to_local_hour.(&1.departure.time)}
+      &%{trip_id: tr_upd.id, departure_time: &1.departure.time}
     )
   end)
-  |> Enum.group_by(& &1.hour, & &1.id)
+  |> Enum.group_by(
+    &unix_timestamp_to_local_hour.(&1.departure_time),
+    & &1.trip_id
+  )
   |> Map.new(fn {hour, trip_ids} -> {hour, MapSet.new(trip_ids)} end)
 
 # |> IO.inspect(label: "predicted")
 
 actual_departures_by_hour =
   vehicle_positions
+  # Group by hour
   |> Enum.group_by(
     &unix_timestamp_to_local_hour.(&1.vehicle.timestamp),
     & &1.vehicle.trip.trip_id
@@ -556,15 +571,19 @@ actual_departures_by_hour =
 # |> IO.inspect(label: "actual")
 
 0..23
-|> Enum.map(
-  &%{
-    "hour" => &1,
-    "predicted_trip_count" =>
-      Map.get(predicted_departures_by_hour, &1, MapSet.new()) |> MapSet.size(),
-    "actual_trip_count" => Map.get(actual_departures_by_hour, &1, MapSet.new()) |> MapSet.size()
+|> Enum.map(fn hour ->
+  predicted_departure_trips = Map.get(predicted_departures_by_hour, hour, MapSet.new())
+  actual_departure_trips = Map.get(actual_departures_by_hour, hour, MapSet.new())
+
+  %{
+    "hour" => "#{pad.(hour)}:00",
+    "# of predicted departure trips" => MapSet.size(predicted_departure_trips),
+    "# of actual departure trips" => MapSet.size(actual_departure_trips)
   }
+end)
+|> Kino.DataTable.new(
+  keys: ["hour", "# of predicted departure trips", "# of actual departure trips"]
 )
-|> Kino.DataTable.new(keys: ["hour", "predicted_trip_count", "actual_trip_count"])
 
 # TODO: Rotate results so they start at beginning of the service day, rather than midnight?
 ```
@@ -577,6 +596,10 @@ actual_departures_by_hour =
   predicted_departures = Map.get(predicted_departures_by_hour, hour, MapSet.new())
   actual_departures = Map.get(actual_departures_by_hour, hour, MapSet.new())
 
+  # *** For reviewer: ***
+  # This does trip matching, which the ticket description said is not needed.
+  # I'm not sure how else to interpret the requested metric, though--am I
+  # misunderstanding it, or is the ticket description incorrect?
   actual_departures_with_predictions =
     MapSet.intersection(predicted_departures, actual_departures)
 
@@ -585,17 +608,19 @@ actual_departures_by_hour =
 
   percentage =
     if actual_departure_count > 0 do
-      100.0 * (actual_departure_with_prediction_count / actual_departure_count)
+      (100.0 * (actual_departure_with_prediction_count / actual_departure_count))
+      |> round()
+      |> then(&"#{&1}%")
     else
       "N/A (0 actual departures)"
     end
 
   %{
-    "hour" => hour,
-    "% of actual trips that had predictions" => percentage
+    "hour" => "#{pad.(hour)}:00",
+    "% of actual departures that had predictions" => percentage
   }
 end)
-|> Kino.DataTable.new(keys: ["hour", "% of actual trips that had predictions"])
+|> Kino.DataTable.new(keys: ["hour", "% of actual departure trips that had predictions"])
 ```
 
-<!-- livebook:{"offset":17811,"stamp":{"token":"XCP.mZ1Nsf5v2N9Dov8XFEnr_o70BQAkargTY0vaxQZKM0Nw_vXCEY8M_YCxpx0Zd_DpyXHS1bOCgaw-W0E8IAzWza0Rb_9BEkA1hZ6LblkX7zT2qP4WnesDlG9iL8puQAvStycxUFqen5d6i4mw8oqKNc4MPxhQ2w","version":2}} -->
+<!-- livebook:{"offset":18350,"stamp":{"token":"XCP.JC9F9vesBDTDqFZASzUQiW5ble6NaZNH66i7VKZW0RH3WTcer-cCdJ1-DDhBVpVe-v3j2IvzGzccvGVdF0nJoCxf-jDjxFQk9CDyRlfpi7xDrsFQpKD3n5PB5UNU48sUQvVI_PQsxFTujX9FiRjwnVd1y6t-8g","version":2}} -->
