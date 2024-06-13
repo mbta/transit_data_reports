@@ -587,15 +587,13 @@ actual_departures_by_hour =
   predicted_departure_trips = Map.get(predicted_departures_by_hour, hour, MapSet.new())
   actual_departure_trips = Map.get(actual_departures_by_hour, hour, MapSet.new())
 
-  %{
-    "hour" => "#{pad.(hour)}:00",
-    "# of predicted departure trips" => MapSet.size(predicted_departure_trips),
-    "# of actual departure trips" => MapSet.size(actual_departure_trips)
-  }
+  [
+    {"hour", "#{pad.(hour)}:00"},
+    {"# of predicted departure trips", MapSet.size(predicted_departure_trips)},
+    {"# of actual departure trips", MapSet.size(actual_departure_trips)}
+  ]
 end)
-|> Kino.DataTable.new(
-  keys: ["hour", "# of predicted departure trips", "# of actual departure trips"]
-)
+|> Kino.DataTable.new()
 
 # TODO: Rotate results so they start at beginning of the service day, rather than midnight?
 ```
@@ -627,12 +625,12 @@ end)
       "N/A (0 actual departures)"
     end
 
-  %{
-    "hour" => "#{pad.(hour)}:00",
-    "% of actual departure trips that had predictions" => percentage
-  }
+  [
+    {"hour", "#{pad.(hour)}:00"},
+    {"% of actual departure trips that had predictions", percentage}
+  ]
 end)
-|> Kino.DataTable.new(keys: ["hour", "% of actual departure trips that had predictions"])
+|> Kino.DataTable.new()
 ```
 
-<!-- livebook:{"offset":22203,"stamp":{"token":"XCP.u3CNQSqvzXlzW12e933cjWyPMD1jwatHCNbtaaiiMjoEjWiZ4Ky5d5YZJwNXqFqb49zibfNmYp_y6PF4N9ETOuhZKa9C_iO0tvXUo80JB1PN7YdQemAw1kpbmDIuOqW1OcU9lAwPWl14mEcVa7uIPjBCsWXyXg","version":2}} -->
+<!-- livebook:{"offset":22052,"stamp":{"token":"XCP.U_ZnPxnIa5KiQrqldOEthPG4TyR_1Kc3hCa3EJtCSiDnhxaiBSHtydmgRfJ-hevEOSZ1CYg1349HMnX67muIWmtGq-uyiELAQg_y-CZ8eDUCtj2NpNNLZDursldOYvbsgmfgXK8l29pGgx_bqbBd5UvV2BZ80Q","version":2}} -->
