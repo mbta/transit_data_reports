@@ -629,10 +629,10 @@ end)
 
   %{
     "hour" => "#{pad.(hour)}:00",
-    "% of actual departures that had predictions" => percentage
+    "% of actual departure trips that had predictions" => percentage
   }
 end)
 |> Kino.DataTable.new(keys: ["hour", "% of actual departure trips that had predictions"])
 ```
 
-<!-- livebook:{"offset":18350,"stamp":{"token":"XCP.JC9F9vesBDTDqFZASzUQiW5ble6NaZNH66i7VKZW0RH3WTcer-cCdJ1-DDhBVpVe-v3j2IvzGzccvGVdF0nJoCxf-jDjxFQk9CDyRlfpi7xDrsFQpKD3n5PB5UNU48sUQvVI_PQsxFTujX9FiRjwnVd1y6t-8g","version":2}} -->
+<!-- livebook:{"offset":22203,"stamp":{"token":"XCP.u3CNQSqvzXlzW12e933cjWyPMD1jwatHCNbtaaiiMjoEjWiZ4Ky5d5YZJwNXqFqb49zibfNmYp_y6PF4N9ETOuhZKa9C_iO0tvXUo80JB1PN7YdQemAw1kpbmDIuOqW1OcU9lAwPWl14mEcVa7uIPjBCsWXyXg","version":2}} -->
