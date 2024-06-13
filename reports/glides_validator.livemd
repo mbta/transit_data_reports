@@ -33,6 +33,15 @@ This report provides an implementation of https://www.notion.so/mbta-downtown-cr
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
+env =
+  Kino.Input.select("Environment", [
+    {"", "prod"},
+    {"-dev-blue", "dev-blue"},
+    {"-dev-green", "dev-green"},
+    {"-dev", "dev"},
+    {"-sandbox", "sandbox"}
+  ])
+
 yesterday_eastern = DateTime.now!("America/New_York") |> DateTime.to_date() |> Date.add(-1)
 date = Kino.Input.date("Date", default: yesterday_eastern)
 
@@ -50,7 +59,7 @@ limit_to_next_2_predictions =
     "Consider next 2 predictions only (🐌 Slow if not paired with a Stop ID filter)"
   )
 
-[date, line, stop_id, limit_to_next_2_predictions]
+[env, date, line, stop_id, limit_to_next_2_predictions]
 |> Enum.each(&Kino.render/1)
 ```
 
@@ -58,6 +67,8 @@ limit_to_next_2_predictions =
 ###############
 # Read inputs #
 ###############
+
+env_suffix = Kino.Input.read(env)
 
 date = Kino.Input.read(date)
 
@@ -128,7 +139,7 @@ files =
 # Function to download a VehiclePosition or TripUpdate file and load into ETS: 
 download_file = fn table_name, file_prefix, remote_prefix ->
   all_files =
-    ExAws.S3.list_objects("mbta-gtfs-s3", prefix: remote_prefix)
+    ExAws.S3.list_objects("mbta-gtfs-s3#{env_suffix}", prefix: remote_prefix)
     |> ExAws.stream!()
     |> Enum.to_list()
 
