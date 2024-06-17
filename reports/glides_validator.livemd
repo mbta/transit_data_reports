@@ -340,8 +340,6 @@ defmodule GlidesReport.Sign do
   @type t :: %__MODULE__{
           predictions: list({trip_id :: String.t(), departure_time :: integer}),
           top_twos: MapSet.t(trip_id :: String.t())
-          # get a trip update
-          # stop id + trip id -> time
         }
 
   defstruct predictions: [], top_twos: MapSet.new()
@@ -358,20 +356,21 @@ defmodule GlidesReport.Sign do
   def new(_trip_id, _departure_time, _timestamp), do: new()
 
   def apply_skipped_trip(sign, trip_id, timestamp) do
+    sign = advance_to_time(sign, timestamp)
+
     update_in(sign.predictions, fn predictions ->
-      Enum.reject(predictions, fn
-        {^trip_id, _} -> true
-        {_, ts} when ts < timestamp -> true
-      end)
+      Enum.reject(predictions, &match?({^trip_id, _}, &1))
     end)
     |> update_top_twos()
   end
 
   def apply_stop_time_update(sign, trip_id, departure_time, timestamp) do
+    sign = advance_to_time(sign, timestamp)
+
     update_in(sign.predictions, fn predictions ->
       predictions
       |> replace_or_append(&match?({^trip_id, _}, &1), {trip_id, departure_time})
-      |> Enum.reject(fn {_, ts} -> ts < timestamp end)
+      |> Enum.sort_by(fn {_, ts} -> ts end)
     end)
     |> update_top_twos()
   end
@@ -382,6 +381,17 @@ defmodule GlidesReport.Sign do
       |> Enum.take(2)
       |> Enum.reduce(top_twos, fn {trip_id, _}, top_twos -> MapSet.put(top_twos, trip_id) end)
     end)
+  end
+
+  # Simulate time passing until the next timestamped trip update comes in.
+  defp advance_to_time(sign, timestamp) do
+    {before, not_before} = Enum.split_while(sign.predictions, fn {_, ts} -> ts < timestamp end)
+    seen = before ++ Enum.take(not_before, 2)
+    seen_trip_ids = MapSet.new(seen, &elem(&1, 0))
+
+    sign = put_in(sign.predictions, not_before)
+    sign = update_in(sign.top_twos, &MapSet.union(&1, seen_trip_ids))
+    sign
   end
 
   defp replace_or_append([], _predicate?, value), do: [value]
@@ -829,4 +839,4 @@ defmodule VehiclePosition do
 end
 ```
 
-<!-- livebook:{"offset":24686,"stamp":{"token":"XCP.4juIcacnzcVJheuvIqUGp27EC-0ThxrlRJzEfKfS4Isl9rcCRCCkFAglch_aagiWmRAY_2v1nV9UJgUXTn_68ve2zUDKI2dRXDuAkE6h7mGsJbaMTaVd5YJVyxchnsP2jbKo7CWGWzpNaj2Mey0exr_LaNV0xg","version":2}} -->
+<!-- livebook:{"offset":25083,"stamp":{"token":"XCP.hNETl0GEnTjs7KRyBEqlIwlNKHpCpoEwD6LyhIS6I2DcWIojSw-B64Ih605jOJTgWMj4pgjVuqgMPBg_NnVbYavMU3vWC7E1CXVLgH56n8uZuokNgx2g6btS5q-8iQ0t4h9FsXXNtUn3cW68iv6r4kcFW_M7aw","version":2}} -->
