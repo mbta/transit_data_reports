@@ -33,7 +33,7 @@ This report provides an implementation of https://www.notion.so/mbta-downtown-cr
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-env =
+env_input =
   Kino.Input.select("Environment", [
     {"", "prod"},
     {"-dev-blue", "dev-blue"},
@@ -43,20 +43,20 @@ env =
   ])
 
 yesterday_eastern = DateTime.now!("America/New_York") |> DateTime.to_date() |> Date.add(-1)
-date = Kino.Input.date("Date", default: yesterday_eastern)
+date_input = Kino.Input.date("Date", default: yesterday_eastern)
 
-line =
+line_input =
   Kino.Input.select("Line", [
     {nil, "(Don't filter by line)"},
     {"Green Line", "Green Line"},
     {"Mattapan Line", "Mattapan Line"}
   ])
 
-stop_id = Kino.Input.text("Stop ID")
+stop_id_input = Kino.Input.text("Stop ID")
 
-limit_to_next_2_predictions = Kino.Input.checkbox("Consider next 2 predictions only")
+limit_to_next_2_predictions_input = Kino.Input.checkbox("Consider next 2 predictions only")
 
-[env, date, line, stop_id, limit_to_next_2_predictions]
+[env_input, date_input, line_input, stop_id_input, limit_to_next_2_predictions_input]
 |> Enum.each(&Kino.render/1)
 ```
 
@@ -516,7 +516,14 @@ end
 Read inputs
 
 ```elixir
-settings = GlidesReport.Settings.new(env, date, line, stop_id, limit_to_next_2_predictions)
+settings =
+  GlidesReport.Settings.new(
+    env_input,
+    date_input,
+    line_input,
+    stop_id_input,
+    limit_to_next_2_predictions_input
+  )
 ```
 
 Load data into ETS tables
@@ -544,7 +551,7 @@ trip_updates =
   |> Stream.reject(&is_nil/1)
 
 trip_updates =
-  if limit_to_next_2_predictions do
+  if settings.limit_to_next_2_predictions do
     top_twos =
       GlidesReport.CountdownClocksSimulation.get_all_top_two_trips(
         settings.stop_id,
