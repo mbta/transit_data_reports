@@ -66,6 +66,16 @@ All the implementation logic for the report.
 
 Collapse this section to skip to the procedure and outputs.
 
+---
+
+---
+
+---
+
+<!-- livebook:{"break_markdown":true} -->
+
+A struct to hold user-defined settings.
+
 ```elixir
 defmodule GlidesReport.Settings do
   @moduledoc "User-selected settings for the report."
@@ -102,7 +112,11 @@ defmodule GlidesReport.Settings do
     |> tap(fn settings -> if is_nil(settings.date), do: raise("A date must be selected") end)
   end
 end
+```
 
+Utility functions.
+
+```elixir
 defmodule GlidesReport.Util do
   # Streams all values from an ETS table. (Assuming table's objects are {key, value} 2-tuples)
   def stream_values(table) do
@@ -228,7 +242,11 @@ defmodule GlidesReport.Util do
     "Glides report - #{table_name} - #{env},#{date}#{optionals}.csv"
   end
 end
+```
 
+Logic for loading trip update and vehicle position data.
+
+```elixir
 defmodule GlidesReport.Loader do
   def load_data(date, env_suffix) do
     set_up_table(:TripUpdates)
@@ -365,9 +383,11 @@ defmodule GlidesReport.Loader do
       else: :ets.new(table, [:named_table, :public])
   end
 end
+```
 
-# Applying the next-2-stops-only filter is somewhat involved.
-# The following 2 modules are only relevant for when that filter is enabled.
+Logic to simulate countdown clocks, used by the "next 2 predictions only" filter.
+
+```elixir
 defmodule GlidesReport.Sign do
   @moduledoc "Simulates a countdown clock at one platform (child stop ID)."
 
@@ -542,13 +562,11 @@ defmodule GlidesReport.CountdownClocksSimulation do
     end
   end
 end
-
-:ok
 ```
 
 ## Main procedure
 
-Read inputs
+Read inputs.
 
 ```elixir
 settings =
@@ -561,13 +579,13 @@ settings =
   )
 ```
 
-Load data into ETS tables
+Load data into ETS tables.
 
 ```elixir
 GlidesReport.Loader.load_data(settings.date, settings.env_suffix)
 ```
 
-### Filter trip updates
+Filter trip updates based on user's settings.
 
 ```elixir
 trip_updates =
@@ -599,7 +617,7 @@ trip_updates =
   end
 ```
 
-### Filter Vehicle Positions
+Filter vehicle positions based on user's settings.
 
 ```elixir
 vehicle_positions =
@@ -881,4 +899,4 @@ defmodule VehiclePosition do
 end
 ```
 
-<!-- livebook:{"offset":26391,"stamp":{"token":"XCP.3uBTIhU-AwbWE5wjvDNCDDkaSyGIPBY-1vQwhekW4GrRKcqcm46rHt1VwlLeC-M_0G4v0ugIPa88q1WFPjYPIyC4Pecqay3IAjVN7WgRVd4zdQqqEQX38coGeqkTZh9k36OGKLnDwof4Wa4NgsuK0b6yyJogDg","version":2}} -->
+<!-- livebook:{"offset":26735,"stamp":{"token":"XCP.By36yPl126zVtA-1Zn1MT_riAwOln10uT1vX-Wqr9QjTfXKqjNo7BK7AC3gFs3RKtYstbQpXrQKF4-JHzHkSkvwf9AVnOw7dkq97RMVgaSzeu_lqxsdPiflVaP4fo56mE2LAHoUcadJm4RNh-GJE3OTwNhipVA","version":2}} -->
