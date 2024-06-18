@@ -136,7 +136,8 @@ defmodule GlidesReport.Util do
         [:trip_update, :timestamp]
       ],
       &(not is_nil(get_in(tr_upd, &1)))
-    )
+    ) and
+      tr_upd[:trip_update][:trip][:revenue]
   end
 
   def filter_stops(tr_upd, stop_id) do
@@ -176,7 +177,8 @@ defmodule GlidesReport.Util do
         [:vehicle, :stop_id]
       ],
       &(not is_nil(get_in(ve_pos, &1)))
-    )
+    ) and
+      ve_pos[:vehicle][:trip][:revenue]
   end
 
   def vehicle_at_stop?(_status_stop, nil), do: true
@@ -501,7 +503,8 @@ defmodule GlidesReport.CountdownClocksSimulation do
   end
 
   defp valid_trip_update_for_simulation?(tr_upd) do
-    tr_upd[:trip_update][:timestamp] != nil
+    tr_upd[:trip_update][:timestamp] != nil and
+      tr_upd[:trip_update][:trip][:revenue]
   end
 
   defp filter_stops_for_simulation(tr_upd, stop_id) do
