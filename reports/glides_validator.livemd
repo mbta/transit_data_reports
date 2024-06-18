@@ -232,6 +232,8 @@ defmodule GlidesReport.Loader do
     set_up_table(:TripUpdates)
     set_up_table(:VehiclePositions)
 
+    File.mkdir_p!(local_dir(env_suffix))
+
     # Create the inferred start and end times:
     start_time = DateTime.new!(date, Time.new!(4, 0, 0), "America/New_York")
 
@@ -246,33 +248,64 @@ defmodule GlidesReport.Loader do
     # Shift start_time to UTC to align with the UTC timestamps used in our S3 object names
     start_time_utc = DateTime.shift_zone!(start_time, "Etc/UTC")
 
-    # Create list of file prefixes for each 5-minute increment
-    files =
+    # Create list of path/to/file prefixes for each 5-minute increment
+    path_prefixes =
       Enum.map(0..total_increments, fn increment ->
         start_time_utc
         |> DateTime.add(increment * 5, :minute)
         |> Calendar.strftime("%Y/%m/%d/%Y-%m-%dT%H:%M")
       end)
 
+    local_files = File.ls!(local_dir(env_suffix))
+
     frame = Kino.Frame.new() |> Kino.render()
 
     [
-      populate_table(:TripUpdates, files, env_suffix),
-      populate_table(:VehiclePositions, files, env_suffix)
+      populate_table(:TripUpdates, path_prefixes, env_suffix, local_files),
+      populate_table(:VehiclePositions, path_prefixes, env_suffix, local_files)
     ]
     |> Enum.each(fn table -> Kino.Frame.append(frame, table) end)
   end
 
   # Loads data into a table and creates a UI element representing the table.
-  defp populate_table(table_name, files, env_suffix) do
-    files
-    |> Task.async_stream(&download_file(&1, table_name, env_suffix), max_concurrency: 15)
+  defp populate_table(table_name, path_prefixes, env_suffix, local_files) do
+    path_prefixes
+    |> Stream.map(&fetch_local_path(&1, table_name, local_files))
+    |> Task.async_stream(fn
+      {:ok, filename} ->
+        local_path = Path.join(local_dir(env_suffix), filename)
+        load_file_into_table(table_name, local_path)
+
+      {:error, path_prefix} ->
+        local_path = download_file(path_prefix, table_name, env_suffix)
+        load_file_into_table(table_name, local_path)
+    end)
     |> Stream.run()
 
     Kino.ETS.new(table_name)
   end
 
-  # Downloads a VehiclePosition or TripUpdate file and loads it into ETS.
+  defp local_dir(""), do: Path.join([System.tmp_dir!(), "glides_report", "prod"])
+  defp local_dir("-" <> env), do: Path.join([System.tmp_dir!(), "glides_report", env])
+
+  defp fetch_local_path(path_prefix, table_name, local_files) do
+    file_prefix = Path.basename(path_prefix)
+    file_substring = "https_cdn.mbta.com_realtime_#{table_name}_enhanced.json"
+
+    Enum.find(local_files, fn filename ->
+      String.starts_with?(filename, file_prefix) and String.contains?(filename, file_substring)
+    end)
+    |> case do
+      nil ->
+        {:error, path_prefix}
+
+      filename ->
+        IO.inspect("File already exists, skipping download: #{filename}")
+        {:ok, filename}
+    end
+  end
+
+  # Downloads a VehiclePosition or TripUpdate file and returns the local path it was downloaded to.
   defp download_file(remote_prefix, table_name, env_suffix) do
     all_objects =
       ExAws.S3.list_objects("mbta-gtfs-s3#{env_suffix}", prefix: remote_prefix)
@@ -290,17 +323,18 @@ defmodule GlidesReport.Loader do
       remote_path
       |> Path.split()
       |> Enum.take(-1)
-      |> then(&Path.join(System.tmp_dir!(), &1))
+      |> then(&Path.join(local_dir(env_suffix), &1))
 
-    if File.exists?(local_path) do
-      IO.inspect("File already exists, skipping download: #{local_path}")
-    else
-      IO.inspect("Downloading #{remote_path} to #{local_path}...")
+    IO.inspect("Downloading #{remote_path} to #{local_path}...")
 
-      ExAws.S3.download_file("mbta-gtfs-s3", remote_path, local_path)
-      |> ExAws.request()
-    end
+    ExAws.S3.download_file("mbta-gtfs-s3", remote_path, local_path)
+    |> ExAws.request()
 
+    local_path
+  end
+
+  # Loads a locally-stored file into an ETS table
+  defp load_file_into_table(table_name, local_path) do
     json_data =
       File.stream!(local_path, [:compressed])
       |> Jaxon.Stream.from_enumerable()
@@ -320,8 +354,6 @@ defmodule GlidesReport.Loader do
       )
     end)
     |> Stream.run()
-
-    {remote_path, local_path}
   end
 
   # Creates or clears an ETS table.
@@ -846,4 +878,4 @@ defmodule VehiclePosition do
 end
 ```
 
-<!-- livebook:{"offset":25083,"stamp":{"token":"XCP.hNETl0GEnTjs7KRyBEqlIwlNKHpCpoEwD6LyhIS6I2DcWIojSw-B64Ih605jOJTgWMj4pgjVuqgMPBg_NnVbYavMU3vWC7E1CXVLgH56n8uZuokNgx2g6btS5q-8iQ0t4h9FsXXNtUn3cW68iv6r4kcFW_M7aw","version":2}} -->
+<!-- livebook:{"offset":26391,"stamp":{"token":"XCP.3uBTIhU-AwbWE5wjvDNCDDkaSyGIPBY-1vQwhekW4GrRKcqcm46rHt1VwlLeC-M_0G4v0ugIPa88q1WFPjYPIyC4Pecqay3IAjVN7WgRVd4zdQqqEQX38coGeqkTZh9k36OGKLnDwof4Wa4NgsuK0b6yyJogDg","version":2}} -->
