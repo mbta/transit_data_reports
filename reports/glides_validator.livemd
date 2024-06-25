@@ -24,79 +24,135 @@ Mix.install(
 )
 ```
 
-## Options for Report
+## Instructions
 
 ### README
 
 This report provides an implementation of https://www.notion.so/mbta-downtown-crossing/Rethinking-Prediction-Accuracy-for-Glides-e99561127b01490689135ab6b70cd33c
 
+### Generate a report
+
+1. Click "Evaluate" on the code cell in the [**Options for Report**](#options-for-report) section.
+2. Scroll to the bottom of the code cell and choose settings for your report.
+3. Jump to the [**Results**](#results) section and click "Evaluate" on its code cell.
+4. Scroll to the bottom of the code cell.
+5. Wait around 30 sec to see results. Takes longer the first time it runs. Click "Export as CSV" to save results to your Downloads folder.
+
+If you want to generate another report with different settings, simply change the settings, scroll back down to [**Results**](#results), and click "Evaluate" again.
+
+## Hardcoded stop data
+
+**Feel free to collapse this section.**
+
+It needs to come before the section below, but is not important.
+
+```elixir
+defmodule GlidesReport.Terminals do
+  @moduledoc "Harcoded data on terminal stops, and fns to query it."
+
+  @terminals [
+    %{
+      name: "Boston College",
+      tags: MapSet.new([:glides, :green, :b, :western, :light_rail]),
+      stop_ids: MapSet.new(["70106"]),
+      # -> South Street
+      next: MapSet.new(["70110"])
+    },
+    %{
+      name: "Cleveland Circle",
+      tags: MapSet.new([:glides, :green, :c, :western, :light_rail]),
+      stop_ids: MapSet.new(["70238"]),
+      # -> Englewood Avenue
+      next: MapSet.new(["70236"])
+    },
+    %{
+      name: "Riverside",
+      tags: MapSet.new([:glides, :green, :d, :western, :light_rail]),
+      stop_ids: MapSet.new(["70160", "70161"]),
+      # -> Woodland
+      next: MapSet.new(["70162"])
+    },
+    # (Not a Glides terminal)
+    %{
+      name: "Heath Street",
+      tags: MapSet.new([:green, :e, :western, :light_rail]),
+      stop_ids: MapSet.new(["70260"]),
+      # -> Back of the Hill
+      next: MapSet.new(["70258"])
+    },
+    %{
+      name: "Union Square",
+      tags: MapSet.new([:glides, :green, :d, :northern, :light_rail]),
+      stop_ids: MapSet.new(["70503", "70504"]),
+      # -> Lechmere
+      next: MapSet.new(["70502"])
+    },
+    %{
+      name: "Medford/Tufts",
+      tags: MapSet.new([:glides, :green, :e, :northern, :light_rail]),
+      stop_ids: MapSet.new(["70511", "70512"]),
+      # -> Ball Square
+      next: MapSet.new(["70510"])
+    },
+    # (Not a Glides terminal)
+    %{
+      name: "Ashmont",
+      tags: MapSet.new([:mattapan, :light_rail]),
+      stop_ids: MapSet.new(["70261"]),
+      # -> Cedar Grove
+      next: MapSet.new(["70263"])
+    },
+    %{
+      name: "Mattapan",
+      tags: MapSet.new([:glides, :mattapan, :light_rail]),
+      stop_ids: MapSet.new(["70276"]),
+      # -> Capen Street
+      next: MapSet.new(["70274"])
+    }
+  ]
+
+  # %{stop_id => MapSet.t(stop_id)}
+  @first_to_next_stop @terminals
+                      |> Enum.flat_map(fn terminal ->
+                        Enum.map(terminal.stop_ids, &{&1, terminal.next})
+                      end)
+                      |> Map.new()
+
+  # %{stop_id => MapSet.t(stop_id)}
+  # (@first_to_next_stop, but inverted)
+  @next_to_first_stop @first_to_next_stop
+                      |> Enum.flat_map(fn {k, sets} -> Enum.map(sets, &{k, &1}) end)
+                      |> Enum.group_by(fn {_k, v} -> v end, fn {k, _v} -> k end)
+                      |> Map.new(fn {k, vs} -> {k, MapSet.new(vs)} end)
+
+  def first_to_next_stop, do: @first_to_next_stop
+
+  def next_to_first_stop, do: @next_to_first_stop
+
+  def by_tags(tags) when is_list(tags) do
+    by_tags(MapSet.new(tags))
+  end
+
+  def by_tags(tags) do
+    terminals()
+    |> Enum.filter(&MapSet.subset?(tags, &1.tags))
+    |> Enum.flat_map(& &1.stop_ids)
+    |> MapSet.new()
+  end
+
+  def by_name(name) do
+    Enum.find_value(terminals(), &if(&1.name == name, do: MapSet.new(&1.stop_ids)))
+  end
+
+  defp terminals, do: @terminals
+end
+```
+
+## Options for Report
+
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-# Groups of stop IDs
-
-boston_college = ["70106"]
-cleveland_circle = ["70238"]
-riverside = ["70160", "70161"]
-heath_street = ["70260"]
-union_square = ["70503", "70504"]
-medford_tufts = ["70511", "70512"]
-
-gl_terminal_stop_ids =
-  [boston_college, cleveland_circle, riverside, heath_street, union_square, medford_tufts]
-  |> List.flatten()
-
-gl_western_terminal_stop_ids =
-  [boston_college, cleveland_circle, riverside, heath_street]
-  |> List.flatten()
-
-gl_northern_terminal_stop_ids =
-  [union_square, medford_tufts]
-  |> List.flatten()
-
-ashmont = ["70261"]
-mattapan = ["70276"]
-m_terminal_stop_ids = List.flatten([ashmont, mattapan])
-
-all_light_rail_stop_ids = List.flatten([gl_terminal_stop_ids, m_terminal_stop_ids])
-
-# Inverts a map with MapSets for values.
-# Set elements become values and keys get put into sets.
-# iex> invert_map_of_sets.(%{a: set([:b, :c]), d: set([:c]), e: set([])})
-# %{b: set([:a]), c: set([:a, :d])}
-invert_map_of_sets = fn m ->
-  m
-  |> Enum.flat_map(fn {k, sets} -> Enum.map(sets, &{k, &1}) end)
-  |> Enum.group_by(fn {_k, v} -> v end, fn {k, _v} -> k end)
-  |> Map.new(fn {k, vs} -> {k, MapSet.new(vs)} end)
-end
-
-first_to_next_stop =
-  %{
-    # Boston College -> South Street
-    "70106" => ["70110"],
-    # Cleveland Circle -> Englewood Avenue
-    "70238" => ["70236"],
-    # Riverside (2) -> Woodland
-    "70160" => ["70162"],
-    "70161" => ["70162"],
-    # Heath Street -> Back of the Hill
-    "70260" => ["70258"],
-    # Union Square (2) -> Lechmere
-    "70503" => ["70502"],
-    "70504" => ["70502"],
-    # Medford/Tufts (2) -> Ball Square
-    "70511" => ["70510"],
-    "70512" => ["70510"],
-    # Ashmont -> Cedar Grove
-    "70261" => ["70263"],
-    # Mattapan -> Capen Street
-    "70276" => ["70274"]
-  }
-  |> Map.new(fn {k, list} -> {k, MapSet.new(list)} end)
-
-next_to_first_stop = invert_map_of_sets.(first_to_next_stop)
-
 env_input =
   Kino.Input.select("Environment", [
     {"", "prod"},
@@ -109,42 +165,62 @@ env_input =
 yesterday_eastern = DateTime.now!("America/New_York") |> DateTime.to_date() |> Date.add(-1)
 date_input = Kino.Input.date("Date", default: yesterday_eastern)
 
-line_input =
-  Kino.Input.select("Line", [
-    {nil, "(Don't filter by line)"},
-    {"Green Line", "Green Line"},
-    {"Mattapan Line", "Mattapan Line"}
-  ])
+stop_groups = [
+  {GlidesReport.Terminals.by_tags([:glides, :light_rail]), "All light rail terminal stops"},
+  {GlidesReport.Terminals.by_tags([:glides, :green]), "All Green Line terminal stops"},
+  {GlidesReport.Terminals.by_tags([:glides, :green, :western]),
+   "Western Green Line terminal stops"},
+  {GlidesReport.Terminals.by_tags([:glides, :green, :northern]),
+   "Northern Green Line terminal stops"}
+]
 
-stop_ids_input =
-  Kino.Input.select("Stop(s)", [
-    {nil, "(Don't filter by stop)"},
-    {all_light_rail_stop_ids, "All light rail terminal stops"},
-    {gl_terminal_stop_ids, "All Green Line terminal stops"},
-    {m_terminal_stop_ids, "All Mattapan terminal stops"},
-    {gl_western_terminal_stop_ids, "Western Green Line terminal stops"},
-    {gl_northern_terminal_stop_ids, "Northern GL terminal stops"},
-    {boston_college, "Boston College"},
-    {cleveland_circle, "Cleveland Circle"},
-    {riverside, "Riverside"},
-    {heath_street, "Heath Street"},
-    {union_square, "Union Square"},
-    {medford_tufts, "Medford/Tufts"},
-    {ashmont, "Ashmont"},
-    {mattapan, "Mattapan"}
-  ])
+stops =
+  [
+    "Boston College",
+    "Cleveland Circle",
+    "Riverside",
+    # (Not a Glides terminal)
+    # "Heath Street",
+    "Union Square",
+    "Medford/Tufts",
+    # (Not a Glides terminal)
+    # "Ashmont",
+    "Mattapan"
+  ]
+  |> Enum.map(&{GlidesReport.Terminals.by_name(&1), &1})
 
-limit_to_next_2_predictions_input = Kino.Input.checkbox("Consider next 2 predictions only")
+stop_ids_input = Kino.Input.select("Stop(s)", stop_groups ++ stops)
+
+limit_to_next_2_predictions_input = Kino.Input.checkbox("Simulate countdown clocks?")
+
+sample_rate_input =
+  Kino.Input.range("Sample data at (?)-minute intervals", min: 1, max: 5, step: 1, default: 5)
+
+samples_per_minute_input =
+  Kino.Input.range("Take (?) samples per minute", min: 1, max: 10, step: 1, default: 1)
 
 [
   env_input,
   date_input,
-  line_input,
   stop_ids_input,
+  sample_rate_input,
+  samples_per_minute_input,
   limit_to_next_2_predictions_input
 ]
-|> Enum.each(&Kino.render/1)
+|> Kino.Layout.grid(columns: 3)
 ```
+
+### Setting Details
+
+| Setting                             | Details                                                                                                                                                                                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Environment                         | Environment to analyze data from.                                                                                                                                                                             |
+| Date                                | Service date to analyze data from. A 24-hour period starting at 4am Eastern.                                                                                                                                  |
+| Line                                | Only analyze data concerning a specific line.                                                                                                                                                                 |
+| Stop(s)                             | Only analyze data concerning a specific stop, or group of stops.<br/>**Note: Terminals that do not have Glides predictions—Heath Street and Ashmont—are ignored regardless of which stop(s) you select.** |
+| Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                             |
+| Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.                                                                                      |
+| Simulate countdown clocks?          | Only consider predictions that would have appeared on countdown clocks—those that were in the next 2 predictions for a stop at some point.                                                                  |
 
 ## Function definitions
 
@@ -169,59 +245,48 @@ defmodule GlidesReport.Settings do
   @type t :: %__MODULE__{
           env_suffix: String.t(),
           date: Date.t(),
-          line: String.t() | nil,
-          stop_ids: list(String.t()) | nil,
-          limit_to_next_2_predictions: boolean
+          stop_ids: nonempty_list(String.t()),
+          limit_to_next_2_predictions: boolean,
+          sample_rate: integer,
+          sample_count: integer
         }
 
   defstruct [
     :env_suffix,
     :date,
-    :line,
     :stop_ids,
-    :limit_to_next_2_predictions
+    :limit_to_next_2_predictions,
+    :sample_rate,
+    :sample_count
   ]
 
   # Parses settings from input elements.
-  def new(env, date, line, stop_ids, limit_to_next_2_predictions) do
+  def new(env, date, stop_ids, limit_to_next_2_predictions, sample_rate, samples_per_minute) do
     %__MODULE__{
       env_suffix: Kino.Input.read(env),
       date: Kino.Input.read(date),
-      line: Kino.Input.read(line),
       stop_ids: Kino.Input.read(stop_ids),
-      limit_to_next_2_predictions: Kino.Input.read(limit_to_next_2_predictions)
+      limit_to_next_2_predictions: Kino.Input.read(limit_to_next_2_predictions),
+      sample_rate: Kino.Input.read(sample_rate) |> trunc(),
+      sample_count: Kino.Input.read(samples_per_minute) |> trunc()
     }
     |> tap(fn settings -> if is_nil(settings.date), do: raise("A date must be selected") end)
   end
 end
+
+Kino.nothing()
 ```
 
 Utility functions.
 
 ```elixir
 defmodule GlidesReport.Util do
-  @first_to_next_stop first_to_next_stop
-
-  defp first_to_next_stop do
-    @first_to_next_stop
-  end
-
   # Streams all values from an ETS table. (Assuming table's objects are {key, value} 2-tuples)
   def stream_values(table) do
     :ets.first(table)
     |> Stream.iterate(fn key -> :ets.next(table, key) end)
     |> Stream.take_while(fn key -> key != :"$end_of_table" end)
     |> Stream.map(fn key -> :ets.lookup_element(table, key, 2) end)
-  end
-
-  def on_line?(nil, _route_id), do: true
-
-  def on_line?("Green Line", route_id) do
-    String.starts_with?(route_id, "Green-")
-  end
-
-  def on_line?("Mattapan Line", route_id) do
-    route_id == "Mattapan"
   end
 
   def zero_pad(n, count \\ 2) do
@@ -231,23 +296,22 @@ defmodule GlidesReport.Util do
   end
 
   def unix_timestamp_to_local_hour(timestamp) do
-    timestamp
-    |> DateTime.from_unix!()
-    |> DateTime.shift_zone!("America/New_York")
-    |> then(& &1.hour)
+    unix_timestamp_to_local_datetime(timestamp).hour
   end
 
   def unix_timestamp_to_local_minute(timestamp) do
+    unix_timestamp_to_local_datetime(timestamp).minute
+  end
+
+  defp unix_timestamp_to_local_datetime(timestamp) do
     timestamp
     |> DateTime.from_unix!()
     |> DateTime.shift_zone!("America/New_York")
-    |> then(& &1.minute)
   end
 
   def relevant_trip_update?(tr_upd) do
     Enum.all?(
       [
-        [:trip_update, :trip, :route_id],
         [:trip_update, :stop_time_update, Access.all(), :stop_id],
         [:trip_update, :timestamp]
       ],
@@ -290,22 +354,32 @@ defmodule GlidesReport.Util do
         [
           [:vehicle, :timestamp],
           [:vehicle, :current_status],
-          [:vehicle, :stop_id]
+          [:vehicle, :stop_id],
+          [:vehicle, :trip, :trip_id]
         ],
         &(not is_nil(get_in(ve_pos, &1)))
       )
 
     is_revenue = ve_pos[:vehicle][:trip][:revenue]
-    is_departing = ve_pos[:vehicle][:current_status] == "IN_TRANSIT_TO"
+    # In some cases, the distance between terminal and next stop is too short
+    # for an "IN_TRANSIT_TO" status to be logged, so we need to also check for "INCOMING_AT".
+    #
+    # If vehicle positions with both statuses exist for a single stop/trip,
+    # the earlier of the two (should usually be the "IN_TRANSIT_TO") takes priority.
+    is_departing = ve_pos[:vehicle][:current_status] in ["IN_TRANSIT_TO", "INCOMING_AT"]
 
     has_required_fields and is_revenue and is_departing
   end
 
-  def vehicle_departing_target_stop?(_status_stop, nil), do: true
-
-  def vehicle_departing_target_stop?(stop_id, target_stop_ids) do
-    Enum.any?(target_stop_ids, fn target_stop ->
-      stop_id in Map.fetch!(first_to_next_stop(), target_stop)
+  # Prevents double-counting of actual departure times caused by vehicle positions
+  # being logged for both IN_TRANSIT_TO and INCOMING_AT statuses.
+  def dedup_statuses(vehicle_positions) do
+    # Since we need to pick the earliest of 2+ matching vehicle updates,
+    # we have to "materialize" the stream with a group_by--no way around it.
+    vehicle_positions
+    |> Enum.group_by(&{&1.vehicle.trip.trip_id, &1.vehicle.stop_id, &1.id})
+    |> Stream.map(fn {_key, ve_positions} ->
+      Enum.min_by(ve_positions, & &1.vehicle.timestamp)
     end)
   end
 
@@ -322,21 +396,33 @@ defmodule GlidesReport.Util do
     |> Enum.join()
   end
 
+  @stop_filters stop_groups ++ stops
+  defp stop_filters, do: @stop_filters
+
   def build_csv_name(table_name, settings) do
     %{
       env_suffix: env_suffix,
       date: date,
-      line: line,
       stop_ids: stop_ids,
-      limit_to_next_2_predictions: limit_to_next_2_predictions
+      limit_to_next_2_predictions: limit_to_next_2_predictions,
+      sample_rate: sample_rate,
+      sample_count: sample_count
     } = settings
 
     env = if env_suffix == "", do: "prod", else: String.slice(env_suffix, 1..-1//1)
 
+    stop_filter =
+      Enum.find_value(stop_filters(), fn {set, label} ->
+        if MapSet.equal?(set, stop_ids), do: label
+      end)
+
+    true = not is_nil(stop_filter)
+
+    sampling = "sampling=#{sample_count}per#{sample_rate}min"
+
     optionals =
       [
-        {line, "line=#{line}"},
-        {stop_ids, "stop_ids=#{inspect(stop_ids)}"},
+        {stop_ids, "stops=#{stop_filter}"},
         {limit_to_next_2_predictions, "next 2 predictions only"}
       ]
       |> Enum.filter(&elem(&1, 0))
@@ -347,16 +433,19 @@ defmodule GlidesReport.Util do
         str -> ",#{str}"
       end
 
-    "Glides report - #{table_name} - #{env},#{date}#{optionals}.csv"
+    "Glides report - #{table_name} - #{env},#{date}#{optionals},#{sampling}.csv"
   end
 end
+
+Kino.nothing()
 ```
 
 Logic for loading trip update and vehicle position data.
 
 ```elixir
 defmodule GlidesReport.Loader do
-  def load_data(date, env_suffix) do
+  @doc "Loads data into ETS tables, and returns counts of files found locally vs downloaded."
+  def load_data(date, env_suffix, sample_rate, sample_count) do
     set_up_table(:TripUpdates)
     set_up_table(:VehiclePositions)
 
@@ -370,95 +459,114 @@ defmodule GlidesReport.Loader do
       # Can be replaced with DateTime.shift/2 once Livebook runs on Elixir 1.17+
       |> Timex.shift(days: 1)
 
-    # Calculate the total number of 5-minute increments in a day
-    total_increments = div(DateTime.diff(end_time, start_time, :minute), 5)
+    total_minutes = DateTime.diff(end_time, start_time, :minute)
+    total_increments = div(total_minutes, sample_rate)
 
     # Shift start_time to UTC to align with the UTC timestamps used in our S3 object names
     start_time_utc = DateTime.shift_zone!(start_time, "Etc/UTC")
 
-    # Create list of path/to/file prefixes for each 5-minute increment
     path_prefixes =
       Enum.map(0..total_increments, fn increment ->
         start_time_utc
-        |> DateTime.add(increment * 5, :minute)
+        |> DateTime.add(increment * sample_rate, :minute)
         |> Calendar.strftime("%Y/%m/%d/%Y-%m-%dT%H:%M")
       end)
 
     local_files = File.ls!(local_dir(env_suffix))
 
-    frame = Kino.Frame.new() |> Kino.render()
+    tr_upd_file_counts =
+      populate_table(:TripUpdates, path_prefixes, env_suffix, local_files, sample_count)
 
-    [
-      populate_table(:TripUpdates, path_prefixes, env_suffix, local_files),
-      populate_table(:VehiclePositions, path_prefixes, env_suffix, local_files)
-    ]
-    |> Enum.each(fn table -> Kino.Frame.append(frame, table) end)
+    ve_pos_file_counts =
+      populate_table(:VehiclePositions, path_prefixes, env_suffix, local_files, sample_count)
+
+    %{local: 0, downloaded: 0}
+    |> Map.merge(tr_upd_file_counts)
+    |> Map.merge(ve_pos_file_counts, fn _k, count1, count2 -> count1 + count2 end)
   end
 
-  # Loads data into a table and creates a UI element representing the table.
-  defp populate_table(table_name, path_prefixes, env_suffix, local_files) do
+  # Loads data into a table.
+  # Returns the number of files that were found locally,
+  # and the number that were newly downloaded.
+  defp populate_table(table_name, path_prefixes, env_suffix, local_files, sample_count) do
     path_prefixes
-    |> Stream.map(&fetch_local_path(&1, table_name, local_files))
-    |> Task.async_stream(fn
-      {:ok, filename} ->
-        local_path = Path.join(local_dir(env_suffix), filename)
-        load_file_into_table(table_name, local_path)
+    |> Stream.map(&fetch_local_paths(&1, table_name, local_files, sample_count))
+    |> Task.async_stream(&do_load(&1, table_name, env_suffix, sample_count),
+      ordered: false,
+      timeout: 10000
+    )
+    |> Stream.map(fn {:ok, result} -> result end)
+    |> Enum.group_by(fn {type, _} -> type end, fn {_, count} -> count end)
+    |> Map.new(fn {type, counts} -> {type, Enum.sum(counts)} end)
+  end
 
-      {:error, path_prefix} ->
-        local_path = download_file(path_prefix, table_name, env_suffix)
-        load_file_into_table(table_name, local_path)
-    end)
-    |> Stream.run()
+  defp do_load({:ok, filenames}, table_name, env_suffix, _) do
+    dir = local_dir(env_suffix)
+    local_paths = Enum.map(filenames, &Path.join(dir, &1))
+    Enum.each(local_paths, &load_file_into_table(table_name, &1))
+    {:local, Enum.count(local_paths)}
+  end
 
-    Kino.ETS.new(table_name)
+  defp do_load({:error, path_prefix, existing_matches}, table_name, env_suffix, sample_count) do
+    local_paths =
+      download_files(path_prefix, table_name, env_suffix, sample_count, existing_matches)
+
+    Enum.each(local_paths, &load_file_into_table(table_name, &1))
+    {:downloaded, Enum.count(local_paths)}
   end
 
   defp local_dir(""), do: Path.join([System.tmp_dir!(), "glides_report", "prod"])
   defp local_dir("-" <> env), do: Path.join([System.tmp_dir!(), "glides_report", env])
 
-  defp fetch_local_path(path_prefix, table_name, local_files) do
+  defp fetch_local_paths(path_prefix, table_name, local_files, sample_count) do
     file_prefix = Path.basename(path_prefix)
     file_substring = "https_cdn.mbta.com_realtime_#{table_name}_enhanced.json"
 
-    Enum.find(local_files, fn filename ->
-      String.starts_with?(filename, file_prefix) and String.contains?(filename, file_substring)
-    end)
-    |> case do
-      nil ->
-        {:error, path_prefix}
+    matches =
+      Enum.filter(local_files, fn filename ->
+        String.starts_with?(filename, file_prefix) and
+          String.contains?(filename, file_substring)
+      end)
 
-      filename ->
-        IO.inspect("File already exists, skipping download: #{filename}")
-        {:ok, filename}
+    if length(matches) >= sample_count do
+      {:ok, Enum.take(matches, sample_count)}
+    else
+      {:error, path_prefix, MapSet.new(matches)}
     end
   end
 
-  # Downloads a VehiclePosition or TripUpdate file and returns the local path it was downloaded to.
-  defp download_file(remote_prefix, table_name, env_suffix) do
-    all_objects =
+  # Downloads VehiclePosition or TripUpdate files and returns the local paths they were downloaded to.
+  defp download_files(remote_prefix, table_name, env_suffix, sample_count, existing_matches) do
+    IO.inspect("mbta-gtfs-s3#{env_suffix}", label: "bucket name")
+
+    remote_paths =
       ExAws.S3.list_objects("mbta-gtfs-s3#{env_suffix}", prefix: remote_prefix)
       |> ExAws.stream!()
-      |> Enum.to_list()
+      |> Enum.map(fn obj ->
+        filename = Path.basename(obj.key)
 
-    remote_path =
-      Enum.find_value(all_objects, fn obj ->
-        if String.contains?(obj.key, "https_cdn.mbta.com_realtime_#{table_name}_enhanced.json"),
-          do: obj.key
+        if filename not in existing_matches and
+             String.contains?(
+               obj.key,
+               "https_cdn.mbta.com_realtime_#{table_name}_enhanced.json"
+             ),
+           do: obj.key
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.take(sample_count)
+
+    local_paths =
+      Enum.map(remote_paths, fn remote_path ->
+        Path.join(local_dir(env_suffix), Path.basename(remote_path))
       end)
 
-    # Files are downloaded to a temp directory.
-    local_path =
-      remote_path
-      |> Path.split()
-      |> Enum.take(-1)
-      |> then(&Path.join(local_dir(env_suffix), &1))
+    Enum.zip(remote_paths, local_paths)
+    |> Enum.each(fn {remote_path, local_path} ->
+      ExAws.S3.download_file("mbta-gtfs-s3", remote_path, local_path)
+      |> ExAws.request()
+    end)
 
-    IO.inspect("Downloading #{remote_path} to #{local_path}...")
-
-    ExAws.S3.download_file("mbta-gtfs-s3", remote_path, local_path)
-    |> ExAws.request()
-
-    local_path
+    local_paths
   end
 
   # Loads a locally-stored file into an ETS table
@@ -488,9 +596,17 @@ defmodule GlidesReport.Loader do
   defp set_up_table(table) do
     if :ets.whereis(table) != :undefined,
       do: :ets.delete_all_objects(table),
-      else: :ets.new(table, [:named_table, :public])
+      else:
+        :ets.new(table, [
+          :named_table,
+          :public,
+          write_concurrency: true,
+          decentralized_counters: true
+        ])
   end
 end
+
+Kino.nothing()
 ```
 
 Logic to simulate countdown clocks, used by the "next 2 predictions only" filter.
@@ -501,7 +617,7 @@ defmodule GlidesReport.Sign do
 
   @type t :: %__MODULE__{
           predictions: list({trip_id :: String.t(), departure_time :: integer}),
-          top_twos: MapSet.t(trip_id :: String.t())
+          top_twos: MapSet.t(departure_time :: integer)
         }
 
   defstruct predictions: [], top_twos: MapSet.new()
@@ -511,7 +627,7 @@ defmodule GlidesReport.Sign do
   def new(trip_id, departure_time, timestamp) when departure_time >= timestamp do
     %__MODULE__{
       predictions: [{trip_id, departure_time}],
-      top_twos: MapSet.new([trip_id])
+      top_twos: MapSet.new([departure_time])
     }
   end
 
@@ -541,7 +657,8 @@ defmodule GlidesReport.Sign do
     update_in(sign.top_twos, fn top_twos ->
       sign.predictions
       |> Enum.take(2)
-      |> Enum.reduce(top_twos, fn {trip_id, _}, top_twos -> MapSet.put(top_twos, trip_id) end)
+      |> MapSet.new(fn {_trip_id, departure_time} -> departure_time end)
+      |> MapSet.union(top_twos)
     end)
   end
 
@@ -549,10 +666,10 @@ defmodule GlidesReport.Sign do
   defp advance_to_time(sign, timestamp) do
     {before, not_before} = Enum.split_while(sign.predictions, fn {_, ts} -> ts < timestamp end)
     seen = before ++ Enum.take(not_before, 2)
-    seen_trip_ids = MapSet.new(seen, &elem(&1, 0))
+    seen_departure_times = MapSet.new(seen, &elem(&1, 1))
 
     sign = put_in(sign.predictions, not_before)
-    sign = update_in(sign.top_twos, &MapSet.union(&1, seen_trip_ids))
+    sign = update_in(sign.top_twos, &MapSet.union(&1, seen_departure_times))
     sign
   end
 
@@ -572,10 +689,14 @@ defmodule GlidesReport.CountdownClocksSimulation do
 
   @type t :: %{(stop_id :: String.t()) => Sign.t()}
 
-  def get_all_top_two_trips(stop_ids, line) do
-    trip_updates_for_simulation(stop_ids, line)
+  # Returns a set of {stop_id, timestamp} tuples, each representing an instance where
+  # a predicted time (timestamp) appeared on the countdown clock for a stop (stop_id).
+  def get_all_top_two_times(stop_ids) do
+    trip_updates_for_simulation(stop_ids)
     |> Enum.reduce(%{}, fn tr_upd, signs -> apply_trip_update(signs, tr_upd) end)
-    |> Stream.map(fn {_stop_id, sign} -> sign.top_twos end)
+    |> Stream.map(fn {stop_id, sign} ->
+      MapSet.new(sign.top_twos, fn timestamp -> {stop_id, timestamp} end)
+    end)
     |> Enum.reduce(MapSet.new(), &MapSet.union/2)
   end
 
@@ -614,14 +735,10 @@ defmodule GlidesReport.CountdownClocksSimulation do
     end)
   end
 
-  defp trip_updates_for_simulation(stop_ids, line) do
+  defp trip_updates_for_simulation(stop_ids) do
     :TripUpdates
     |> Util.stream_values()
     |> Stream.filter(&relevant_trip_update_for_simulation?/1)
-    # Apply line filter
-    |> Stream.filter(fn tr_upd ->
-      line && Util.on_line?(line, tr_upd[:trip_update][:trip][:route_id])
-    end)
     # Filter each trip update's stop_time_update list.
     # If a stop filter is set, apply it.
     # Also remove any entries that don't have a .departure.time value.
@@ -671,6 +788,8 @@ defmodule GlidesReport.CountdownClocksSimulation do
     end
   end
 end
+
+Kino.nothing()
 ```
 
 ## Main procedure
@@ -682,16 +801,33 @@ settings =
   GlidesReport.Settings.new(
     env_input,
     date_input,
-    line_input,
     stop_ids_input,
-    limit_to_next_2_predictions_input
+    limit_to_next_2_predictions_input,
+    sample_rate_input,
+    samples_per_minute_input
   )
 ```
 
-Load data into ETS tables.
+Load data into memory.
 
 ```elixir
-GlidesReport.Loader.load_data(settings.date, settings.env_suffix)
+file_counts =
+  GlidesReport.Loader.load_data(
+    settings.date,
+    settings.env_suffix,
+    settings.sample_rate,
+    settings.sample_count
+  )
+
+IO.puts("Found #{file_counts.local} existing local files.")
+IO.puts("Downloaded #{file_counts.downloaded} new files.")
+
+# Uncomment to inspect the ETS tables:
+# Kino.Layout.grid([
+#   Kino.ETS.new(:TripUpdates),
+#   Kino.ETS.new(:VehiclePositions)
+# ], columns: 2)
+Kino.nothing()
 ```
 
 Filter trip updates based on user's settings.
@@ -701,10 +837,6 @@ trip_updates =
   :TripUpdates
   |> GlidesReport.Util.stream_values()
   |> Stream.filter(&GlidesReport.Util.relevant_trip_update?/1)
-  # Apply line filter
-  |> Stream.filter(fn tr_upd ->
-    GlidesReport.Util.on_line?(settings.line, tr_upd.trip_update.trip.route_id)
-  end)
   # Filter each trip update's stop_time_update list.
   # If a stop filter is set, apply it.
   # Also remove any entries that don't have a .departure.time value.
@@ -712,48 +844,52 @@ trip_updates =
   |> Stream.map(&GlidesReport.Util.filter_stops(&1, settings.stop_ids))
   |> Stream.reject(&is_nil/1)
 
-trip_updates =
+top_twos =
   if settings.limit_to_next_2_predictions do
-    top_twos =
-      GlidesReport.CountdownClocksSimulation.get_all_top_two_trips(
-        settings.stop_ids,
-        settings.line
-      )
-
-    Stream.filter(trip_updates, &(&1.id in top_twos))
+    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(settings.stop_ids)
   else
-    trip_updates
+    nil
   end
+
+Kino.nothing()
 ```
 
 Filter vehicle positions based on user's settings.
 
 ```elixir
+first_to_next_stop = GlidesReport.Terminals.first_to_next_stop()
+
+# Vehicles are identified as departing a terminal if they are traveling
+# to the stop *following* that terminal.
+next_stops =
+  settings.stop_ids
+  |> Enum.flat_map(&Map.fetch!(first_to_next_stop, &1))
+  |> MapSet.new()
+  |> IO.inspect()
+
 vehicle_positions =
   :VehiclePositions
   |> GlidesReport.Util.stream_values()
   |> Stream.filter(&GlidesReport.Util.relevant_vehicle_position?/1)
-  |> Stream.filter(fn ve_pos ->
-    GlidesReport.Util.on_line?(settings.line, ve_pos.vehicle.trip.route_id)
-  end)
-  |> Stream.filter(fn ve_pos ->
-    GlidesReport.Util.vehicle_departing_target_stop?(
-      ve_pos.vehicle.stop_id,
-      settings.stop_ids
-    )
-  end)
+  |> Stream.filter(&(&1.vehicle.stop_id in next_stops))
+  |> GlidesReport.Util.dedup_statuses()
+
+Kino.nothing()
 ```
 
-## Per-Hour Counts of trips for which RTR made departure predictions vs. actual departures
+## Results
+
+### Per-Hour Counts of trips for which RTR made departure predictions vs. actual departures
 
 Methodology:
 
 * From VehiclePositions, get all timestamps (truncated to minute) at which a vehicle actually departed a stop.[^1]
 * From TripUpdates, get all timestamps (truncated to minute) at which a vehicle was predicted to depart a stop.[^2]
+* If a vehicle actually departed stop S at the same minute that a vehicle was predicted to depart stop S, then that prediction is considered accurate.
 
 ---
 
-[^1]: There is no "departing stop" vehicle status, so we look for events where the vehicle is "IN_TRANSIT_TO" the stop _after_ the target stop.
+[^1]: There is no "departing stop" vehicle status, so we look for events where the vehicle is "IN_TRANSIT_TO" or "INCOMING_AT" the stop _after_ the target stop.
 [^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
 
 ```elixir
@@ -767,6 +903,13 @@ predicted_first_stop_departure_times_by_hour =
       tr_upd.trip_update.stop_time_update,
       &{&1.stop_id, &1.departure.time}
     )
+  end)
+  |> then(fn stream ->
+    if not is_nil(top_twos) do
+      Stream.filter(stream, &(&1 in top_twos))
+    else
+      stream
+    end
   end)
   |> Enum.group_by(
     fn {_first_stop_id, timestamp} ->
@@ -812,7 +955,8 @@ table =
     # predictions with next_stops in actuals, and the relation is many:1.
     actual_AND_predicted_departure_time_count =
       Enum.count(actual_next_stop_in_transit_to_times, fn {next_stop_id, minute} ->
-        valid_first_stop_ids = Map.fetch!(next_to_first_stop, next_stop_id)
+        valid_first_stop_ids =
+          Map.fetch!(GlidesReport.Terminals.next_to_first_stop(), next_stop_id)
 
         Enum.any?(valid_first_stop_ids, fn id ->
           {id, minute} in predicted_first_stop_departure_times
@@ -839,12 +983,25 @@ table =
 
 table_name = "Predicted vs actual departures"
 
-Kino.Download.new(
-  fn -> GlidesReport.Util.table_to_csv(table) end,
-  filename: GlidesReport.Util.build_csv_name(table_name, settings),
-  label: "Export as CSV"
-)
-|> Kino.render()
+markdown =
+  Kino.Markdown.new("""
+  ### 📣 Please note:
+
+  **The last table column is significantly affected by the sample rate / samples-per-minute settings.**
+
+  Percentage will increase with more samples taken.
+
+  ---
+  """)
+  |> Kino.render()
+
+download_button =
+  Kino.Download.new(
+    fn -> GlidesReport.Util.table_to_csv(table) end,
+    filename: GlidesReport.Util.build_csv_name(table_name, settings),
+    label: "Export as CSV"
+  )
+  |> Kino.render()
 
 Kino.DataTable.new(table, name: table_name)
 ```
@@ -999,6 +1156,8 @@ defmodule VehiclePosition do
   # "AB" | "BA"
   @type carriage_orientation :: String.t()
 end
+
+Kino.nothing()
 ```
 
-<!-- livebook:{"offset":30281,"stamp":{"token":"XCP.WmdJrkpoLtnZCEKqcCRmgAxKOpE-Np-zL8-GorXv5Xa_EtJQ0wgKH659dCm1oRyfGmucWiKigBLmllSQEZuvaPFQTx1qxBJAk3pJyzdBiy4LM2KucZSjq0u15j1zswfs52hWCPeWZ75_sKeLWwuDSdlK4XylcQ","version":2}} -->
+<!-- livebook:{"offset":37719,"stamp":{"token":"XCP.JytT3W8PFwAuSOBD8_cFwcdXzyTPUAsP_wXtTbWsY2jO9uOhWhrj_9lk4q3SHXG08zwfZ_kfR4VTRiWFV7MikBdo6uAWa96WWt1vOO-B_jehQAXeJ8Bq6BeYp3uIWozYo30xFhKbSqt6RSSE0meDTE8TycPYAQ","version":2}} -->
