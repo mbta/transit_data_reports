@@ -22,13 +22,32 @@ Mix.install(
     ]
   ]
 )
+
+Kino.nothing()
 ```
 
 ## Instructions
 
 ### README
 
-This report provides an implementation of https://www.notion.so/mbta-downtown-crossing/Rethinking-Prediction-Accuracy-for-Glides-e99561127b01490689135ab6b70cd33c
+This notebook provides an implementation of https://www.notion.so/mbta-downtown-crossing/Rethinking-Prediction-Accuracy-for-Glides-e99561127b01490689135ab6b70cd33c
+
+The notebook requires AWS credentials for a user with access to the `mbta-gtfs-s3` family of S3 buckets.
+
+<details>
+<summary><kbd><strong>How to add your AWS credentials</strong></kbd></summary>
+<br/>
+
+---
+
+1. Open your Hub. [This link](/hub/personal-hub) should send you there.
+1. Under "Secrets", add two secrets with the following names:
+   - AWS_ACCESS_KEY_ID
+   - AWS_SECRET_ACCESS_KEY
+1. Return to this notebook. Click the "lock" icon in the left sidebar and toggle on both secrets.
+
+---
+</details>
 
 ### Generate a report
 
@@ -174,19 +193,9 @@ stop_groups = [
    "Northern Green Line terminal stops"}
 ]
 
+# (Heath Street and Ashmont are omitted -- not Glides terminals)
 stops =
-  [
-    "Boston College",
-    "Cleveland Circle",
-    "Riverside",
-    # (Not a Glides terminal)
-    # "Heath Street",
-    "Union Square",
-    "Medford/Tufts",
-    # (Not a Glides terminal)
-    # "Ashmont",
-    "Mattapan"
-  ]
+  ["Boston College", "Cleveland Circle", "Riverside", "Union Square", "Medford/Tufts", "Mattapan"]
   |> Enum.map(&{GlidesReport.Terminals.by_name(&1), &1})
 
 stop_ids_input = Kino.Input.select("Stop(s)", stop_groups ++ stops)
@@ -277,7 +286,7 @@ end
 Kino.nothing()
 ```
 
-Utility functions.
+General utility functions.
 
 ```elixir
 defmodule GlidesReport.Util do
@@ -289,6 +298,7 @@ defmodule GlidesReport.Util do
     |> Stream.map(fn key -> :ets.lookup_element(table, key, 2) end)
   end
 
+  # Formats an integer to a string, with left zero-padding to at least `count` digits.
   def zero_pad(n, count \\ 2) do
     n
     |> Integer.to_string()
@@ -307,80 +317,6 @@ defmodule GlidesReport.Util do
     timestamp
     |> DateTime.from_unix!()
     |> DateTime.shift_zone!("America/New_York")
-  end
-
-  def relevant_trip_update?(tr_upd) do
-    Enum.all?(
-      [
-        [:trip_update, :stop_time_update, Access.all(), :stop_id],
-        [:trip_update, :timestamp]
-      ],
-      &(not is_nil(get_in(tr_upd, &1)))
-    ) and
-      tr_upd[:trip_update][:trip][:revenue]
-  end
-
-  def filter_stops(tr_upd, stop_ids) do
-    case filter_stops_by_stop_id(tr_upd, stop_ids) do
-      nil ->
-        nil
-
-      tr_upd ->
-        update_in(tr_upd.trip_update.stop_time_update, fn stop_time_update ->
-          Enum.reject(stop_time_update, &is_nil(get_in(&1, [:departure, :time])))
-        end)
-    end
-  end
-
-  # Removes, from a trip update's stop_time_update, all entries that don't apply to the target stop(s).
-  # Returns nil if trip update doesn't contain the target stop anywhere in its stop_time_update.
-  defp filter_stops_by_stop_id(tr_upd, nil), do: tr_upd
-
-  defp filter_stops_by_stop_id(tr_upd, stop_ids) do
-    tr_upd.trip_update.stop_time_update
-    |> Enum.find(&(&1.stop_id in stop_ids))
-    |> case do
-      nil ->
-        nil
-
-      target_stop_time_update ->
-        put_in(tr_upd.trip_update.stop_time_update, [target_stop_time_update])
-    end
-  end
-
-  def relevant_vehicle_position?(ve_pos) do
-    has_required_fields =
-      Enum.all?(
-        [
-          [:vehicle, :timestamp],
-          [:vehicle, :current_status],
-          [:vehicle, :stop_id],
-          [:vehicle, :trip, :trip_id]
-        ],
-        &(not is_nil(get_in(ve_pos, &1)))
-      )
-
-    is_revenue = ve_pos[:vehicle][:trip][:revenue]
-    # In some cases, the distance between terminal and next stop is too short
-    # for an "IN_TRANSIT_TO" status to be logged, so we need to also check for "INCOMING_AT".
-    #
-    # If vehicle positions with both statuses exist for a single stop/trip,
-    # the earlier of the two (should usually be the "IN_TRANSIT_TO") takes priority.
-    is_departing = ve_pos[:vehicle][:current_status] in ["IN_TRANSIT_TO", "INCOMING_AT"]
-
-    has_required_fields and is_revenue and is_departing
-  end
-
-  # Prevents double-counting of actual departure times caused by vehicle positions
-  # being logged for both IN_TRANSIT_TO and INCOMING_AT statuses.
-  def dedup_statuses(vehicle_positions) do
-    # Since we need to pick the earliest of 2+ matching vehicle updates,
-    # we have to "materialize" the stream with a group_by--no way around it.
-    vehicle_positions
-    |> Enum.group_by(&{&1.vehicle.trip.trip_id, &1.vehicle.stop_id, &1.id})
-    |> Stream.map(fn {_key, ve_positions} ->
-      Enum.min_by(ve_positions, & &1.vehicle.timestamp)
-    end)
   end
 
   # Converts a nonempty list of KW-lists, e.g.:
@@ -440,14 +376,104 @@ end
 Kino.nothing()
 ```
 
+Utility functions for Trip Updates.
+
+```elixir
+defmodule GlidesReport.TripUpdate do
+  def relevant?(tr_upd) do
+    Enum.all?(
+      [
+        [:trip_update, :stop_time_update, Access.all(), :stop_id],
+        [:trip_update, :timestamp]
+      ],
+      &(not is_nil(get_in(tr_upd, &1)))
+    ) and
+      tr_upd[:trip_update][:trip][:revenue]
+  end
+
+  def filter_stops(tr_upd, stop_ids) do
+    case filter_stops_by_stop_id(tr_upd, stop_ids) do
+      nil ->
+        nil
+
+      tr_upd ->
+        update_in(tr_upd.trip_update.stop_time_update, fn stop_time_update ->
+          Enum.reject(stop_time_update, &is_nil(get_in(&1, [:departure, :time])))
+        end)
+    end
+  end
+
+  # Removes, from a trip update's stop_time_update, all entries that don't apply to the target stop(s).
+  # Returns nil if trip update doesn't contain the target stop anywhere in its stop_time_update.
+  defp filter_stops_by_stop_id(tr_upd, nil), do: tr_upd
+
+  defp filter_stops_by_stop_id(tr_upd, stop_ids) do
+    tr_upd.trip_update.stop_time_update
+    |> Enum.find(&(&1.stop_id in stop_ids))
+    |> case do
+      nil ->
+        nil
+
+      target_stop_time_update ->
+        put_in(tr_upd.trip_update.stop_time_update, [target_stop_time_update])
+    end
+  end
+end
+
+Kino.nothing()
+```
+
+Utility functions for Vehicle Positions.
+
+```elixir
+defmodule GlidesReport.VehiclePosition do
+  def relevant?(ve_pos) do
+    has_required_fields =
+      Enum.all?(
+        [
+          [:vehicle, :timestamp],
+          [:vehicle, :current_status],
+          [:vehicle, :stop_id],
+          [:vehicle, :trip, :trip_id]
+        ],
+        &(not is_nil(get_in(ve_pos, &1)))
+      )
+
+    is_revenue = ve_pos[:vehicle][:trip][:revenue]
+    # In some cases, the distance between terminal and next stop is too short
+    # for an "IN_TRANSIT_TO" status to be logged, so we need to also check for "INCOMING_AT".
+    #
+    # If vehicle positions with both statuses exist for a single stop/trip,
+    # the earlier of the two (usually the "IN_TRANSIT_TO") takes priority.
+    is_departing = ve_pos[:vehicle][:current_status] in ["IN_TRANSIT_TO", "INCOMING_AT"]
+
+    has_required_fields and is_revenue and is_departing
+  end
+
+  # Prevents double-counting of actual departure times caused by vehicle positions
+  # being logged for both IN_TRANSIT_TO and INCOMING_AT statuses.
+  def dedup_statuses(vehicle_positions) do
+    # Since we need to pick the earliest of 2+ matching vehicle updates,
+    # we have to "materialize" the stream with a group_by--no way around it.
+    vehicle_positions
+    |> Enum.group_by(&{&1.vehicle.trip.trip_id, &1.vehicle.stop_id, &1.id})
+    |> Stream.map(fn {_key, ve_positions} ->
+      Enum.min_by(ve_positions, & &1.vehicle.timestamp)
+    end)
+  end
+end
+
+Kino.nothing()
+```
+
 Logic for loading trip update and vehicle position data.
 
 ```elixir
 defmodule GlidesReport.Loader do
   @doc "Loads data into ETS tables, and returns counts of files found locally vs downloaded."
   def load_data(date, env_suffix, sample_rate, sample_count) do
-    set_up_table(:TripUpdates)
-    set_up_table(:VehiclePositions)
+    tr_upd_deletion_task = set_up_table(:TripUpdates)
+    ve_pos_deletion_task = set_up_table(:VehiclePositions)
 
     File.mkdir_p!(local_dir(env_suffix))
 
@@ -471,13 +497,41 @@ defmodule GlidesReport.Loader do
         |> Calendar.strftime("%Y/%m/%d/%Y-%m-%dT%H:%M")
       end)
 
-    local_files = File.ls!(local_dir(env_suffix))
+    local_files_by_prefix =
+      File.ls!(local_dir(env_suffix))
+      |> Enum.group_by(fn filename ->
+        ~r"""
+        ^                                        # Anchor search to start of string
+        (?<timestamp_prefix>\d+-\d+-\d+T\d+:\d+) # ISO8601 timestamp, excluding seconds and "Z"
+        :\d+Z_.*                                 # Stuff we don't care about: seconds & name of data source
+        (?<type>TripUpdates|VehiclePositions)    # Description of the file's contents
+        """x
+        |> Regex.named_captures(filename)
+        |> case do
+          nil -> nil
+          %{"timestamp_prefix" => ts, "type" => type} -> {ts, type}
+        end
+      end)
+      |> Map.delete(nil)
 
     tr_upd_file_counts =
-      populate_table(:TripUpdates, path_prefixes, env_suffix, local_files, sample_count)
+      populate_table(:TripUpdates, path_prefixes, env_suffix, local_files_by_prefix, sample_count)
 
     ve_pos_file_counts =
-      populate_table(:VehiclePositions, path_prefixes, env_suffix, local_files, sample_count)
+      populate_table(
+        :VehiclePositions,
+        path_prefixes,
+        env_suffix,
+        local_files_by_prefix,
+        sample_count
+      )
+
+    deletion_tasks = Enum.reject([tr_upd_deletion_task, ve_pos_deletion_task], &is_nil/1)
+
+    if Enum.any?(Task.yield_many(deletion_tasks, timeout: 1), &is_nil/1) do
+      IO.puts("Waiting for previous table(s) to finish deleting...")
+      Task.await_many(deletion_tasks, timeout: :infinity)
+    end
 
     %{local: 0, downloaded: 0}
     |> Map.merge(tr_upd_file_counts)
@@ -487,85 +541,84 @@ defmodule GlidesReport.Loader do
   # Loads data into a table.
   # Returns the number of files that were found locally,
   # and the number that were newly downloaded.
-  defp populate_table(table_name, path_prefixes, env_suffix, local_files, sample_count) do
+  defp populate_table(table_name, path_prefixes, env_suffix, local_files_by_prefix, sample_count) do
     path_prefixes
-    |> Stream.map(&fetch_local_paths(&1, table_name, local_files, sample_count))
+    |> Enum.map(
+      &fetch_local_filenames(&1, Atom.to_string(table_name), local_files_by_prefix, sample_count)
+    )
     |> Task.async_stream(&do_load(&1, table_name, env_suffix, sample_count),
       ordered: false,
-      timeout: 10000
+      timeout: 10_000 * sample_count
     )
     |> Stream.map(fn {:ok, result} -> result end)
-    |> Enum.group_by(fn {type, _} -> type end, fn {_, count} -> count end)
-    |> Map.new(fn {type, counts} -> {type, Enum.sum(counts)} end)
+    |> Enum.reduce(%{}, fn counts, total ->
+      Map.merge(total, counts, fn _k, running_total, count -> running_total + count end)
+    end)
   end
 
   defp do_load({:ok, filenames}, table_name, env_suffix, _) do
     dir = local_dir(env_suffix)
-    local_paths = Enum.map(filenames, &Path.join(dir, &1))
-    Enum.each(local_paths, &load_file_into_table(table_name, &1))
-    {:local, Enum.count(local_paths)}
+
+    filenames
+    |> Enum.map(&Path.join(dir, &1))
+    |> Enum.each(&load_file_into_table(table_name, &1))
+
+    %{local: Enum.count(filenames)}
   end
 
-  defp do_load({:error, path_prefix, existing_matches}, table_name, env_suffix, sample_count) do
-    local_paths =
-      download_files(path_prefix, table_name, env_suffix, sample_count, existing_matches)
+  defp do_load({:error, path_prefix, existing_filenames}, table_name, env_suffix, sample_count) do
+    new_filenames =
+      download_files(path_prefix, table_name, env_suffix, sample_count, existing_filenames)
 
-    Enum.each(local_paths, &load_file_into_table(table_name, &1))
-    {:downloaded, Enum.count(local_paths)}
+    dir = local_dir(env_suffix)
+
+    Enum.concat(existing_filenames, new_filenames)
+    |> Enum.map(&Path.join(dir, &1))
+    |> Enum.each(&load_file_into_table(table_name, &1))
+
+    %{local: Enum.count(existing_filenames), downloaded: Enum.count(new_filenames)}
   end
 
   defp local_dir(""), do: Path.join([System.tmp_dir!(), "glides_report", "prod"])
   defp local_dir("-" <> env), do: Path.join([System.tmp_dir!(), "glides_report", env])
 
-  defp fetch_local_paths(path_prefix, table_name, local_files, sample_count) do
+  # Returns names of existing local files that match the prefix and table name.
+  defp fetch_local_filenames(path_prefix, table_name, local_files_by_prefix, sample_count) do
     file_prefix = Path.basename(path_prefix)
-    file_substring = "https_cdn.mbta.com_realtime_#{table_name}_enhanced.json"
 
-    matches =
-      Enum.filter(local_files, fn filename ->
-        String.starts_with?(filename, file_prefix) and
-          String.contains?(filename, file_substring)
-      end)
+    case Map.fetch(local_files_by_prefix, {file_prefix, table_name}) do
+      {:ok, filenames} when length(filenames) >= sample_count ->
+        {:ok, Enum.take(filenames, sample_count)}
 
-    if length(matches) >= sample_count do
-      {:ok, Enum.take(matches, sample_count)}
-    else
-      {:error, path_prefix, MapSet.new(matches)}
+      {:ok, filenames} ->
+        {:error, path_prefix, MapSet.new(filenames)}
+
+      :error ->
+        {:error, path_prefix, MapSet.new()}
     end
   end
 
-  # Downloads VehiclePosition or TripUpdate files and returns the local paths they were downloaded to.
-  defp download_files(remote_prefix, table_name, env_suffix, sample_count, existing_matches) do
-    IO.inspect("mbta-gtfs-s3#{env_suffix}", label: "bucket name")
+  # Downloads VehiclePosition or TripUpdate files and returns the local filenames they were downloaded to.
+  defp download_files(remote_prefix, table_name, env_suffix, sample_count, existing_filenames) do
+    ExAws.S3.list_objects("mbta-gtfs-s3#{env_suffix}", prefix: remote_prefix)
+    |> ExAws.stream!()
+    |> Stream.filter(fn %{key: key} ->
+      filename = Path.basename(key)
 
-    remote_paths =
-      ExAws.S3.list_objects("mbta-gtfs-s3#{env_suffix}", prefix: remote_prefix)
-      |> ExAws.stream!()
-      |> Enum.map(fn obj ->
-        filename = Path.basename(obj.key)
-
-        if filename not in existing_matches and
-             String.contains?(
-               obj.key,
-               "https_cdn.mbta.com_realtime_#{table_name}_enhanced.json"
-             ),
-           do: obj.key
-      end)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.take(sample_count)
-
-    local_paths =
-      Enum.map(remote_paths, fn remote_path ->
-        Path.join(local_dir(env_suffix), Path.basename(remote_path))
-      end)
-
-    Enum.zip(remote_paths, local_paths)
-    |> Enum.each(fn {remote_path, local_path} ->
-      ExAws.S3.download_file("mbta-gtfs-s3", remote_path, local_path)
-      |> ExAws.request()
+      filename not in existing_filenames and
+        Regex.match?(~r"(realtime|rtr)_#{table_name}_enhanced.json.gz$", filename)
     end)
+    |> Stream.map(&{&1.key, Path.basename(&1.key)})
+    |> Enum.take(sample_count)
+    |> Enum.map(fn {remote_path, filename} ->
+      local_path = Path.join(local_dir(env_suffix), filename)
 
-    local_paths
+      {:ok, _} =
+        ExAws.S3.download_file("mbta-gtfs-s3#{env_suffix}", remote_path, local_path)
+        |> ExAws.request()
+
+      filename
+    end)
   end
 
   # Loads a locally-stored file into an ETS table
@@ -577,31 +630,43 @@ defmodule GlidesReport.Loader do
     timestamp =
       json_data
       |> Jaxon.Stream.query([:root, "header", "timestamp"])
-      |> Enum.to_list()
-      |> List.first()
+      |> Enum.at(0)
 
     json_data
     |> Jaxon.Stream.query([:root, "entity", :all])
-    |> Stream.each(fn obj ->
-      :ets.insert(
-        table_name,
-        {"#{timestamp}_#{obj["id"]}", AtomicMap.convert(obj, safe: false, underscore: false)}
-      )
+    |> Enum.map(fn obj ->
+      {"#{timestamp}_#{obj["id"]}", AtomicMap.convert(obj, safe: false, underscore: false)}
     end)
-    |> Stream.run()
+    |> then(&:ets.insert(table_name, &1))
   end
 
   # Creates or clears an ETS table.
+  # If a previous table existed, returns pid of a background deletion task.
   defp set_up_table(table) do
-    if :ets.whereis(table) != :undefined,
-      do: :ets.delete_all_objects(table),
-      else:
-        :ets.new(table, [
-          :named_table,
-          :public,
-          write_concurrency: true,
-          decentralized_counters: true
-        ])
+    # Deleting a large table is surprisingly slow:
+    # TripUpdates takes almost a minute with sample rate of 2 per minute.
+    #
+    # Solution: Rename the old table and delete it concurrently in a background process,
+    # So we aren't blocked on fetching new data.
+    deletion_task =
+      if :ets.whereis(table) != :undefined do
+        :ets.rename(table, :"#{table}_OLD")
+
+        Task.async(fn ->
+          IO.puts("Deleting previous #{inspect(table)} table in the background...")
+          :ets.delete(:"#{table}_OLD")
+          IO.puts("Finished deleting previous #{inspect(table)} table")
+        end)
+      end
+
+    :ets.new(table, [
+      :named_table,
+      :public,
+      write_concurrency: :auto,
+      decentralized_counters: true
+    ])
+
+    deletion_task
   end
 end
 
@@ -835,12 +900,12 @@ Filter trip updates based on user's settings.
 trip_updates =
   :TripUpdates
   |> GlidesReport.Util.stream_values()
-  |> Stream.filter(&GlidesReport.Util.relevant_trip_update?/1)
+  |> Stream.filter(&GlidesReport.TripUpdate.relevant?/1)
   # Filter each trip update's stop_time_update list.
   # If a stop filter is set, apply it.
   # Also remove any entries that don't have a .departure.time value.
   # If filtered list is empty for any trip update, the trip update is removed entirely.
-  |> Stream.map(&GlidesReport.Util.filter_stops(&1, settings.stop_ids))
+  |> Stream.map(&GlidesReport.TripUpdate.filter_stops(&1, settings.stop_ids))
   |> Stream.reject(&is_nil/1)
 
 top_twos =
@@ -864,14 +929,13 @@ next_stops =
   settings.stop_ids
   |> Enum.flat_map(&Map.fetch!(first_to_next_stop, &1))
   |> MapSet.new()
-  |> IO.inspect()
 
 vehicle_positions =
   :VehiclePositions
   |> GlidesReport.Util.stream_values()
-  |> Stream.filter(&GlidesReport.Util.relevant_vehicle_position?/1)
+  |> Stream.filter(&GlidesReport.VehiclePosition.relevant?/1)
   |> Stream.filter(&(&1.vehicle.stop_id in next_stops))
-  |> GlidesReport.Util.dedup_statuses()
+  |> GlidesReport.VehiclePosition.dedup_statuses()
 
 Kino.nothing()
 ```
@@ -982,25 +1046,23 @@ table =
 
 table_name = "Predicted vs actual departures"
 
-markdown =
-  Kino.Markdown.new("""
-  ### 📣 Please note:
+Kino.Markdown.new("""
+### 📣 Please note:
 
-  **The last table column is significantly affected by the sample rate / samples-per-minute settings.**
+**The last table column is significantly affected by the sample rate / samples-per-minute settings.**
 
-  Percentage will increase with more samples taken.
+Percentage will increase with more samples taken.
 
-  ---
-  """)
-  |> Kino.render()
+---
+""")
+|> Kino.render()
 
-download_button =
-  Kino.Download.new(
-    fn -> GlidesReport.Util.table_to_csv(table) end,
-    filename: GlidesReport.Util.build_csv_name(table_name, settings),
-    label: "Export as CSV"
-  )
-  |> Kino.render()
+Kino.Download.new(
+  fn -> GlidesReport.Util.table_to_csv(table) end,
+  filename: GlidesReport.Util.build_csv_name(table_name, settings),
+  label: "Export as CSV"
+)
+|> Kino.render()
 
 Kino.DataTable.new(table, name: table_name)
 ```
@@ -1159,4 +1221,4 @@ end
 Kino.nothing()
 ```
 
-<!-- livebook:{"offset":37719,"stamp":{"token":"XCP.JytT3W8PFwAuSOBD8_cFwcdXzyTPUAsP_wXtTbWsY2jO9uOhWhrj_9lk4q3SHXG08zwfZ_kfR4VTRiWFV7MikBdo6uAWa96WWt1vOO-B_jehQAXeJ8Bq6BeYp3uIWozYo30xFhKbSqt6RSSE0meDTE8TycPYAQ","version":2}} -->
+<!-- livebook:{"offset":39946,"stamp":{"token":"XCP.WrhLgWRE0k3prpdLrKfaqTn6rS9FyIrweH-SvCRVq0bC6TwtyP1avJ3qXtrtLhDbGvffrW3n_ZeHJCdICufWhx3a9bU5HtEKJFJ21fmFNYjKEKZOYLLu4UHKKFoUw7H-IBBy9Bmf0ZPW_7VBMN4K66AA3N69qQ","version":2}} -->
