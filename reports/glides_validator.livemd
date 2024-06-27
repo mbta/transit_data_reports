@@ -10,11 +10,11 @@ Mix.install(
     {:ex_aws_s3, "~> 2.5"},
     {:hackney, "~> 1.20"},
     {:sweet_xml, "~> 0.7.4"},
-    {:timex, "~> 3.7"},
     {:tzdata, "~> 1.1"},
     {:jaxon, "~> 2.0"}
   ],
   config: [
+    elixir: [time_zone_database: Tzdata.TimeZoneDatabase],
     ex_aws: [
       access_key_id: System.get_env("LB_AWS_ACCESS_KEY_ID"),
       secret_access_key: System.get_env("LB_AWS_SECRET_ACCESS_KEY"),
@@ -456,8 +456,7 @@ defmodule GlidesReport.Loader do
 
     end_time =
       DateTime.new!(date, Time.new!(3, 59, 59), "America/New_York")
-      # Can be replaced with DateTime.shift/2 once Livebook runs on Elixir 1.17+
-      |> Timex.shift(days: 1)
+      |> DateTime.shift(day: 1)
 
     total_minutes = DateTime.diff(end_time, start_time, :minute)
     total_increments = div(total_minutes, sample_rate)
