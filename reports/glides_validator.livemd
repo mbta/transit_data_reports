@@ -528,7 +528,7 @@ defmodule GlidesReport.Loader do
       IO.write([
         "\r",
         moons_of_progress()[rem(i, 8)],
-        "Loading data for ",
+        " Loading data for ",
         String.slice(prefix, -5..-1//1),
         " UTC"
       ])
@@ -548,7 +548,7 @@ defmodule GlidesReport.Loader do
     end)
     |> tap(fn _ ->
       # Make space for the next thing printed after the "progress meter"
-      IO.write("\n")
+      IO.write("\n\n")
     end)
   end
 
@@ -1286,4 +1286,4 @@ end
 Kino.nothing()
 ```
 
-<!-- livebook:{"offset":41125,"stamp":{"token":"XCP.jyMT3fR28_Q42Uovw6micwikFYERL2WmfOtfBUfd6-IhTUD1PzGkM-DJpSIOXfgOtLu0WYGizZtz2DdeDAr_eM-n-HXsqCwew_WNiPOz6U7izSxTMa4jToGVdJ1En7Qb0N0MZ0awQ_bpQ8mqGGh4wv6TsqAfUw","version":2}} -->
+<!-- livebook:{"offset":41128,"stamp":{"token":"XCP.iaWgzbGzRn5rdVdeLbGb_cTebFhkrZijpMfxtTjfVpKG0VuMllak6DyYbmB-eMQ4i3WhEPf14jPCjwfa3OqDKZ1ttcwaBnjrlA5OLdOFXJVhZF9M2BTdcXzAtLYAJRgJzfL-su0U7tnnD6yKkYOBJR7vx_115Q","version":2}} -->
