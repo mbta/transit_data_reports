@@ -51,19 +51,39 @@ The notebook requires AWS credentials for a user with access to the `mbta-gtfs-s
 
 ### Generate a report
 
-1. Click "Evaluate" on the code cell in the [**Options for Report**](#options-for-report) section.
-2. Scroll to the bottom of the code cell and choose settings for your report.
-3. Jump to the [**Results**](#results) section and click "Evaluate" on its code cell.
-4. Scroll to the bottom of the code cell.
-5. Wait around 30 sec to see results. Takes longer the first time it runs. Click "Export as CSV" to save results to your Downloads folder.
+**tldr: Evaluate code cells starting with the first one in [**Setup**](#setup).\
+Some cells produce controls that let you adjust how the report runs.\
+The cell in [**Results**](#results) generates the report.**
+
+**Tip:** Cells that need your input are marked with a "👉"!
+
+1. Scroll down to the Setup section, or jump straight to it using this link: [**Setup**](#setup).
+2. **Click "Evaluate" on the first code cell in the section.**\
+   Choose your data source settings using the controls that appear below the cell.
+3. **Continue to the cell labeled "Load data into memory", and evaluate it.**\
+   Wait for data to load—this may take a while. You can watch progress in the box below the cell.
+4. **Continue to the cell labeled "👉 Now, choose how you want to filter the data.", and evaluate it.**\
+   Choose your filtering settings using the controls that appear below the cell.
+5. **Jump to the [**Results**](#results) section and click "Evaluate" on its code cell.**\
+   Wait around 30 sec to see results.
 
 If you want to generate another report with different settings, simply change the settings, scroll back down to [**Results**](#results), and click "Evaluate" again.
 
-## Hardcoded stop data
+## Function definitions & Hardcoded stop data
 
 **Feel free to collapse this section.**
 
-It needs to come before the section below, but is not important.
+It contains all of the implementation logic for the report.
+
+It needs to come before the sections below it, but is not important.
+
+Collapse this section to skip to the report setup.
+
+---
+
+---
+
+---
 
 ```elixir
 defmodule GlidesReport.Terminals do
@@ -165,24 +185,6 @@ defmodule GlidesReport.Terminals do
 
   defp terminals, do: @terminals
 end
-```
-
-## Options for Report
-
-<!-- livebook:{"reevaluate_automatically":true} -->
-
-```elixir
-env_input =
-  Kino.Input.select("Environment", [
-    {"", "prod"},
-    {"-dev-blue", "dev-blue"},
-    {"-dev-green", "dev-green"},
-    {"-dev", "dev"},
-    {"-sandbox", "sandbox"}
-  ])
-
-yesterday_eastern = DateTime.now!("America/New_York") |> DateTime.to_date() |> Date.add(-1)
-date_input = Kino.Input.date("Date", default: yesterday_eastern)
 
 stop_groups = [
   {GlidesReport.Terminals.by_tags([:glides, :light_rail]), "All light rail terminal stops"},
@@ -198,52 +200,8 @@ stops =
   ["Boston College", "Cleveland Circle", "Riverside", "Union Square", "Medford/Tufts", "Mattapan"]
   |> Enum.map(&{GlidesReport.Terminals.by_name(&1), &1})
 
-stop_ids_input = Kino.Input.select("Stop(s)", stop_groups ++ stops)
-
-limit_to_next_2_predictions_input = Kino.Input.checkbox("Simulate countdown clocks?")
-
-sample_rate_input =
-  Kino.Input.range("Sample data at (?)-minute intervals", min: 1, max: 5, step: 1, default: 5)
-
-samples_per_minute_input =
-  Kino.Input.range("Take (?) samples per minute", min: 1, max: 10, step: 1, default: 1)
-
-[
-  env_input,
-  date_input,
-  stop_ids_input,
-  sample_rate_input,
-  samples_per_minute_input,
-  limit_to_next_2_predictions_input
-]
-|> Kino.Layout.grid(columns: 3)
+Kino.nothing()
 ```
-
-### Setting Details
-
-| Setting                             | Details                                                                                                                                                                                                       |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Environment                         | Environment to analyze data from.                                                                                                                                                                             |
-| Date                                | Service date to analyze data from. A 24-hour period starting at 4am Eastern.                                                                                                                                  |
-| Line                                | Only analyze data concerning a specific line.                                                                                                                                                                 |
-| Stop(s)                             | Only analyze data concerning a specific stop, or group of stops.<br/>**Note: Terminals that do not have Glides predictions—Heath Street and Ashmont—are ignored regardless of which stop(s) you select.** |
-| Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                             |
-| Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.                                                                                      |
-| Simulate countdown clocks?          | Only consider predictions that would have appeared on countdown clocks—those that were in the next 2 predictions for a stop at some point.                                                                  |
-
-## Function definitions
-
-All the implementation logic for the report.
-
-Collapse this section to skip to the procedure and outputs.
-
----
-
----
-
----
-
-<!-- livebook:{"break_markdown":true} -->
 
 A struct to hold user-defined settings.
 
@@ -269,17 +227,30 @@ defmodule GlidesReport.Settings do
     :sample_count
   ]
 
-  # Parses settings from input elements.
-  def new(env, date, stop_ids, limit_to_next_2_predictions, sample_rate, samples_per_minute) do
-    %__MODULE__{
-      env_suffix: Kino.Input.read(env),
-      date: Kino.Input.read(date),
-      stop_ids: Kino.Input.read(stop_ids),
-      limit_to_next_2_predictions: Kino.Input.read(limit_to_next_2_predictions),
-      sample_rate: Kino.Input.read(sample_rate) |> trunc(),
-      sample_count: Kino.Input.read(samples_per_minute) |> trunc()
+  # Parses initial data source settings from input elements.
+  def new(env, date, sample_rate, samples_per_minute) do
+    settings =
+      %__MODULE__{
+        env_suffix: Kino.Input.read(env),
+        date: Kino.Input.read(date),
+        sample_rate: Kino.Input.read(sample_rate) |> trunc(),
+        sample_count: Kino.Input.read(samples_per_minute) |> trunc()
+      }
+
+    if is_nil(settings.date) do
+      Kino.interrupt!(:error, "A date must be selected")
+    end
+
+    settings
+  end
+
+  # Adds filtering settings.
+  def set_filters(settings, stop_ids, limit_to_next_2_predictions) do
+    %{
+      settings
+      | stop_ids: Kino.Input.read(stop_ids),
+        limit_to_next_2_predictions: Kino.Input.read(limit_to_next_2_predictions)
     }
-    |> tap(fn settings -> if is_nil(settings.date), do: raise("A date must be selected") end)
   end
 end
 
@@ -514,8 +485,12 @@ defmodule GlidesReport.Loader do
       end)
       |> Map.delete(nil)
 
+    IO.puts("Loading Trip Updates...")
+
     tr_upd_file_counts =
       populate_table(:TripUpdates, path_prefixes, env_suffix, local_files_by_prefix, sample_count)
+
+    IO.puts("Loading Vehicle Positions...")
 
     ve_pos_file_counts =
       populate_table(
@@ -531,6 +506,7 @@ defmodule GlidesReport.Loader do
     if Enum.any?(Task.yield_many(deletion_tasks, timeout: 1), &is_nil/1) do
       IO.puts("Waiting for previous table(s) to finish deleting...")
       Task.await_many(deletion_tasks, timeout: :infinity)
+      IO.puts("Done.")
     end
 
     %{local: 0, downloaded: 0}
@@ -538,12 +514,28 @@ defmodule GlidesReport.Loader do
     |> Map.merge(ve_pos_file_counts, fn _k, count1, count2 -> count1 + count2 end)
   end
 
+  # 🌝
+  defp moons_of_progress do
+    %{0 => "🌕", 1 => "🌖", 2 => "🌗", 3 => "🌘", 4 => "🌑", 5 => "🌒", 6 => "🌓", 7 => "🌔"}
+  end
+
   # Loads data into a table.
   # Returns the number of files that were found locally,
   # and the number that were newly downloaded.
   defp populate_table(table_name, path_prefixes, env_suffix, local_files_by_prefix, sample_count) do
     path_prefixes
-    |> Enum.map(
+    |> Stream.with_index(fn prefix, i ->
+      IO.write([
+        "\r",
+        moons_of_progress()[rem(i, 8)],
+        "Loading data for ",
+        String.slice(prefix, -5..-1//1),
+        " UTC"
+      ])
+
+      prefix
+    end)
+    |> Stream.map(
       &fetch_local_filenames(&1, Atom.to_string(table_name), local_files_by_prefix, sample_count)
     )
     |> Task.async_stream(&do_load(&1, table_name, env_suffix, sample_count),
@@ -553,6 +545,10 @@ defmodule GlidesReport.Loader do
     |> Stream.map(fn {:ok, result} -> result end)
     |> Enum.reduce(%{}, fn counts, total ->
       Map.merge(total, counts, fn _k, running_total, count -> running_total + count end)
+    end)
+    |> tap(fn _ ->
+      # Make space for the next thing printed after the "progress meter"
+      IO.write("\n")
     end)
   end
 
@@ -634,10 +630,12 @@ defmodule GlidesReport.Loader do
 
     json_data
     |> Jaxon.Stream.query([:root, "entity", :all])
-    |> Enum.map(fn obj ->
-      {"#{timestamp}_#{obj["id"]}", AtomicMap.convert(obj, safe: false, underscore: false)}
+    |> Enum.each(fn obj ->
+      :ets.insert(
+        table_name,
+        {"#{timestamp}_#{obj["id"]}", AtomicMap.convert(obj, safe: false, underscore: false)}
+      )
     end)
-    |> then(&:ets.insert(table_name, &1))
   end
 
   # Creates or clears an ETS table.
@@ -655,15 +653,13 @@ defmodule GlidesReport.Loader do
         Task.async(fn ->
           IO.puts("Deleting previous #{inspect(table)} table in the background...")
           :ets.delete(:"#{table}_OLD")
-          IO.puts("Finished deleting previous #{inspect(table)} table")
         end)
       end
 
     :ets.new(table, [
       :named_table,
       :public,
-      write_concurrency: :auto,
-      decentralized_counters: true
+      write_concurrency: :auto
     ])
 
     deletion_task
@@ -856,7 +852,48 @@ end
 Kino.nothing()
 ```
 
-## Main procedure
+## Setup
+
+### 👉 What data do you want to load?
+
+```elixir
+env_input =
+  Kino.Input.select("Environment", [
+    {"", "prod"},
+    {"-dev-blue", "dev-blue"},
+    {"-dev-green", "dev-green"},
+    {"-dev", "dev"},
+    {"-sandbox", "sandbox"}
+  ])
+
+yesterday_eastern = DateTime.now!("America/New_York") |> DateTime.to_date() |> Date.add(-1)
+date_input = Kino.Input.date("Date", default: yesterday_eastern)
+
+sample_rate_input =
+  Kino.Input.range("Sample data at (?)-minute intervals", min: 1, max: 5, step: 1, default: 5)
+
+samples_per_minute_input =
+  Kino.Input.range("Take (?) samples per minute", min: 1, max: 10, step: 1, default: 1)
+
+[
+  env_input,
+  date_input,
+  sample_rate_input,
+  samples_per_minute_input
+]
+|> Kino.Layout.grid(columns: 2)
+```
+
+### Setting Details
+
+| Setting                             | Details                                                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Environment                         | Environment to analyze data from.                                                                                        |
+| Date                                | Service date to analyze data from. A 24-hour period starting at 4am Eastern.                                             |
+| Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.        |
+| Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation. |
+
+<!-- livebook:{"break_markdown":true} -->
 
 Read inputs.
 
@@ -865,8 +902,6 @@ settings =
   GlidesReport.Settings.new(
     env_input,
     date_input,
-    stop_ids_input,
-    limit_to_next_2_predictions_input,
     sample_rate_input,
     samples_per_minute_input
   )
@@ -893,6 +928,37 @@ IO.puts("Downloaded #{file_counts.downloaded} new files.")
 # ], columns: 2)
 Kino.nothing()
 ```
+
+### 👉 Now, choose how you want to filter the data.
+
+```elixir
+stop_ids_input = Kino.Input.select("Stop(s)", stop_groups ++ stops)
+
+limit_to_next_2_predictions_input = Kino.Input.checkbox("Simulate countdown clocks?")
+
+[
+  stop_ids_input,
+  limit_to_next_2_predictions_input
+]
+|> Kino.Layout.grid(columns: 2)
+```
+
+### Setting Details
+
+| Setting                    | Details                                                                                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop(s)                    | Only analyze data concerning a specific stop, or group of stops.<br/>**Note: Terminals that do not have Glides predictions—Heath Street and Ashmont—are ignored regardless of which stop(s) you select.** |
+| Simulate countdown clocks? | Only consider predictions that would have appeared on countdown clocks—those that were in the next 2 predictions for a stop at some point.                                                                  |
+
+<!-- livebook:{"break_markdown":true} -->
+
+Read inputs.
+
+```elixir
+settings = GlidesReport.Settings.set_filters(settings, stop_ids_input, limit_to_next_2_predictions_input)
+```
+
+## Main procedure
 
 Filter trip updates based on user's settings.
 
@@ -986,7 +1052,6 @@ predicted_first_stop_departure_times_by_hour =
 
 actual_next_stop_in_transit_to_times_by_hour =
   vehicle_positions
-  # Group by hour
   |> Stream.map(&{&1.vehicle.stop_id, &1.vehicle.timestamp})
   |> Enum.group_by(
     fn {_next_stop_id, timestamp} ->
@@ -1221,4 +1286,4 @@ end
 Kino.nothing()
 ```
 
-<!-- livebook:{"offset":39946,"stamp":{"token":"XCP.WrhLgWRE0k3prpdLrKfaqTn6rS9FyIrweH-SvCRVq0bC6TwtyP1avJ3qXtrtLhDbGvffrW3n_ZeHJCdICufWhx3a9bU5HtEKJFJ21fmFNYjKEKZOYLLu4UHKKFoUw7H-IBBy9Bmf0ZPW_7VBMN4K66AA3N69qQ","version":2}} -->
+<!-- livebook:{"offset":41125,"stamp":{"token":"XCP.jyMT3fR28_Q42Uovw6micwikFYERL2WmfOtfBUfd6-IhTUD1PzGkM-DJpSIOXfgOtLu0WYGizZtz2DdeDAr_eM-n-HXsqCwew_WNiPOz6U7izSxTMa4jToGVdJ1En7Qb0N0MZ0awQ_bpQ8mqGGh4wv6TsqAfUw","version":2}} -->
