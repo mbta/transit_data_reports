@@ -565,7 +565,6 @@ defmodule GlidesReport.Loader do
     s3_bucket = "mbta-gtfs-s3#{env_suffix}"
 
     # Service day is a 24-hr period starting at 4am on the selected date.
-    # Create the inferred start and end times.
     start_time = DateTime.new!(date, Time.new!(4, 0, 0), "America/New_York")
 
     end_time =
@@ -1202,7 +1201,6 @@ trip_updates =
 top_twos =
   if settings.limit_to_next_2_predictions do
     GlidesReport.CountdownClocksSimulation.get_all_top_two_times(settings.stop_ids)
-    |> tap(&IO.inspect(MapSet.size(&1), label: "total count of top twos"))
   else
     nil
   end
@@ -1440,4 +1438,4 @@ defmodule GlidesReport.Spec.VehiclePosition do
 end
 ```
 
-<!-- livebook:{"offset":46887,"stamp":{"token":"XCP.yTWUC7CtlPuv_SBd86IqxZO2v1W0O5OyRUzY_7DN9WPCyVVVRxAZlgW21pgQf4nOr73yFyyDWN4VUAe9hmZVbl2Rr7oBRPPdsd_rRIIsKNCK0Yu9sgUpV8s6_JfmAih0JSl_8qYrTqFZLy7Yu224urg5hOQ17Q","version":2}} -->
+<!-- livebook:{"offset":46765,"stamp":{"token":"XCP.80o5Whe-zKn_syNfZKS41Z7qCUsDyqnOo3kL3lnivVMA8W-3w0kt1CkGvdf6i1xAZ0HUxILPqiwxNYqTEPKF_EgdgOU-sz5miq8N1eg2JOHxstMCaiWVuqzGrC0-ob-gPip527t_TihTaIV9qWD0n48SiR4wWA","version":2}} -->
