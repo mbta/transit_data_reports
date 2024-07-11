@@ -1,4 +1,4 @@
-# Glides Terminal Prediction Accuracy
+# Glides Terminal Missed/Extraneous Predictions
 
 ```elixir
 Mix.install(
@@ -1438,4 +1438,4 @@ defmodule GlidesReport.Spec.VehiclePosition do
 end
 ```
 
-<!-- livebook:{"offset":46765,"stamp":{"token":"XCP.80o5Whe-zKn_syNfZKS41Z7qCUsDyqnOo3kL3lnivVMA8W-3w0kt1CkGvdf6i1xAZ0HUxILPqiwxNYqTEPKF_EgdgOU-sz5miq8N1eg2JOHxstMCaiWVuqzGrC0-ob-gPip527t_TihTaIV9qWD0n48SiR4wWA","version":2}} -->
+<!-- livebook:{"offset":46775,"stamp":{"token":"XCP.ItWdsohj0yG7QEdOpPpTstrkX68-img98RaIo78UO_bU_f3UaOTGFmMXl68MkXw9l67v716WcnMgZmM37T0hKHAQFgXQ-NNDK53Y_lgYbuUhTezjEMhrSy99jLFuBGoRTQoCp_JRtjJoUuQJvvn5-j2oNXP6GQ","version":2}} -->
