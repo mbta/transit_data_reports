@@ -1,0 +1,7 @@
+# Glides Terminal Departure Accuracy
+
+## Section
+
+```elixir
+
+```
