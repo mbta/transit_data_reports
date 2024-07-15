@@ -2,6 +2,7 @@ defmodule TransitData.GlidesReport.Spec.TripUpdate do
   @moduledoc """
   Structure of an entry in the :TripUpdates table--
   a cleaned/pruned version of a TripUpdate.
+  (Typespec for documentation only)
   """
 
   alias TransitData.GlidesReport.Common

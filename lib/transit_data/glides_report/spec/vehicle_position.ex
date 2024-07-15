@@ -2,6 +2,7 @@ defmodule TransitData.GlidesReport.Spec.VehiclePosition do
   @moduledoc """
   Structure of an entry in the :VehiclePositions table--
   a cleaned/pruned version of a VehiclePosition.
+  (Typespec for documentation only)
   """
 
   alias TransitData.GlidesReport.Common
