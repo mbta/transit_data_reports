@@ -6,10 +6,35 @@ This repository provides a common place to store [Livebook](https://livebook.dev
 
 ## Setup
 
-1. Install Livebook, either through Poetry or the desktop app
-2. Create (or rename the default) a Hub to contain all of the MBTA / Transit Data reports
-3. Add the report(s) you wish to run to a Hub
-4. Add secret(s) to the Hub
+1. Install Livebook, either through Poetry or the desktop app. (Desktop app recommended)
+2. Create (or rename the default) a Hub to contain all of the MBTA / Transit Data reports.
+3. Add the report(s) you wish to run to a Hub.
+4. Add secret(s) to the Hub.
+
+When starting a new notebook file, paste the following into its setup cell to pull in the TransitData library in /lib:
+```ex
+# Assuming this notebook is saved in /reports...
+project_dir = __DIR__ |> Path.join("..") |> Path.expand()
+
+Mix.install(
+  [
+    {:kino, "~> 0.12.0"},
+    {:transit_data, path: project_dir},
+    # transit_data needs a timezone DB for some date-related logic.
+    {:tz, "~> 0.26.5"},
+    # Put any additional libraries needed by this notebook here.
+  ],
+  config: [
+    elixir: [time_zone_database: Tz.TimeZoneDatabase],
+    # (Assuming your notebook needs to access data in S3)
+    ex_aws: [
+      access_key_id: System.get_env("LB_AWS_ACCESS_KEY_ID"),
+      secret_access_key: System.get_env("LB_AWS_SECRET_ACCESS_KEY"),
+      region: "us-east-1"
+    ]
+  ]
+)
+```
 
 ## Secrets
 

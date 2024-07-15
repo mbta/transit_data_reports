@@ -1,5 +1,30 @@
 # Glides Terminal Departure Accuracy
 
+```elixir
+project_dir = __DIR__ |> Path.join("..") |> Path.expand()
+
+Mix.install(
+  [
+    {:kino, "~> 0.12.0"},
+    {:transit_data, path: project_dir},
+    # transit_data needs a timezone DB for some date-related logic.
+    {:tz, "~> 0.26.5"},
+  ],
+  config: [
+    elixir: [time_zone_database: Tz.TimeZoneDatabase],
+    ex_aws: [
+      access_key_id: System.get_env("LB_AWS_ACCESS_KEY_ID"),
+      secret_access_key: System.get_env("LB_AWS_SECRET_ACCESS_KEY"),
+      region: "us-east-1"
+    ]
+  ]
+)
+
+alias TransitData.GlidesReport
+
+Kino.nothing()
+```
+
 ## Section
 
 ```elixir
