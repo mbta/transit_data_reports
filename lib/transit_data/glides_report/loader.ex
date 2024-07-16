@@ -255,32 +255,41 @@ defmodule TransitData.GlidesReport.Loader do
   defp local_dir(""), do: local_dir("-prod")
 
   # Returns names of existing local files that match the prefix and table name.
-  # If at least `sample_count` matching files are found, returns `{:ok, filenames}`.
+  # If:
+  #   - at least `sample_count` matching files are found, OR
+  #   - all relevant files have already been downloaded in a previous run,
+  #   returns `{:ok, filenames}`.
+  #
   # Otherwise, returns `{:download_more, found_existing_filenames}`.
-  defp fetch_local_filenames(path_prefix, table_name, sample_count) do
+  defp fetch_local_filenames(path_prefix, table_name, sample_count)
+       when is_integer(sample_count) do
+    filenames =
+      Path.wildcard("#{table_name}_#{Path.basename(path_prefix)}*.etf")
+      |> Enum.take(sample_count)
+
+    if File.exists?(all_available_data_downloaded_sentinel_filename(path_prefix, table_name)) do
+      # We've already saved all relevant data for this minute in S3.
+      # Even if there's not enough, there's no point in trying to download more.
+      {:ok, filenames}
+    else
+      if length(filenames) == sample_count do
+        {:ok, filenames}
+      else
+        {:download_more, MapSet.new(filenames)}
+      end
+    end
+  end
+
+  defp fetch_local_filenames(path_prefix, table_name, :all) do
     filenames = Path.wildcard("#{table_name}_#{Path.basename(path_prefix)}*.etf")
 
     if File.exists?(all_available_data_downloaded_sentinel_filename(path_prefix, table_name)) do
       # We've already saved all relevant data for this minute in S3.
-      filenames = if sample_count == :all, do: filenames, else: Enum.take(filenames, sample_count)
-
       {:ok, filenames}
     else
-      case sample_count do
-        :all ->
-          # Whatever we found, it's not enough! Try and download more.
-          # After that happens, the sentinel file will be created and we won't hit this case again.
-          {:download_more, MapSet.new(filenames)}
-
-        n ->
-          filenames = Enum.take(filenames, n)
-
-          if length(filenames) == sample_count do
-            {:ok, filenames}
-          else
-            {:download_more, MapSet.new(filenames)}
-          end
-      end
+      # Whatever we found, it's not enough! Try and download more.
+      # After that happens, the sentinel file will be created and we won't hit this case again.
+      {:download_more, MapSet.new(filenames)}
     end
   end
 

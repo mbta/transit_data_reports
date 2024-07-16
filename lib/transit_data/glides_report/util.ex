@@ -1,4 +1,8 @@
 defmodule TransitData.GlidesReport.Util do
+  @moduledoc """
+  Miscellaneous utility functions for the report.
+  """
+
   alias TransitData.GlidesReport
 
   # Streams all values from an ETS table. (Assuming table's objects are {key, value} 2-tuples)
@@ -75,8 +79,7 @@ defmodule TransitData.GlidesReport.Util do
         {limit_to_next_2_predictions, "next 2 predictions only"}
       ]
       |> Enum.filter(&elem(&1, 0))
-      |> Enum.map(&elem(&1, 1))
-      |> Enum.join(",")
+      |> Enum.map_join(",", &elem(&1, 1))
       |> case do
         "" -> ""
         str -> ",#{str}"

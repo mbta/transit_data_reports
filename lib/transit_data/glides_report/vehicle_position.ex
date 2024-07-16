@@ -1,4 +1,8 @@
 defmodule TransitData.GlidesReport.VehiclePosition do
+  @moduledoc """
+  Functions to work with VehiclePosition data structures.
+  """
+
   alias TransitData.GlidesReport
 
   def clean_up(

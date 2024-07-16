@@ -1,4 +1,8 @@
 defmodule TransitData.GlidesReport.TripUpdate do
+  @moduledoc """
+  Functions to work with TripUpdate data structures.
+  """
+
   alias TransitData.GlidesReport
 
   def clean_up(tr_upd, header_timestamp)
@@ -8,9 +12,9 @@ defmodule TransitData.GlidesReport.TripUpdate do
   end
 
   def clean_up(
-        tr_upd = %{
+        %{
           "trip_update" => %{"trip" => %{"revenue" => true}, "stop_time_update" => [_ | _]}
-        },
+        } = tr_upd,
         header_timestamp
       ) do
     tr_upd
