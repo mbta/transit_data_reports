@@ -5,7 +5,7 @@ defmodule TransitData.GlidesReport.Spec.TripUpdate do
   (Typespec for documentation only)
   """
 
-  alias TransitData.GlidesReport.Common
+  alias TransitData.GlidesReport.Spec.Common
 
   @type t :: {key, value}
 
@@ -19,11 +19,11 @@ defmodule TransitData.GlidesReport.Spec.TripUpdate do
   @type value :: %{
           id: Common.trip_id(),
           trip_update: %{
-            timestamp: Commmon.timestamp(),
+            timestamp: Common.timestamp(),
             stop_time_update:
               list(%{
-                departure: %{time: Commmon.timestamp()},
-                stop_id: Commmon.stop_id()
+                departure: %{time: Common.timestamp()},
+                stop_id: Common.stop_id()
               })
           }
         }

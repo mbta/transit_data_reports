@@ -24,3 +24,6 @@ transit_data_reports-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Files downloaded by notebooks.
+/downloads/

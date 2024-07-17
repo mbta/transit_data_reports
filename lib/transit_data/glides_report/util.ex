@@ -34,6 +34,18 @@ defmodule TransitData.GlidesReport.Util do
     |> DateTime.shift_zone!("America/New_York")
   end
 
+  # Returns /absolute/path/to/project_root/downloads
+  def downloads_dir do
+    # I'm sure there's a more concise way to do this, but I couldn't find it. :\
+    project_root =
+      __DIR__
+      |> Path.split()
+      |> Enum.take_while(&(&1 != "lib"))
+      |> Path.join()
+
+    Path.join(project_root, "downloads")
+  end
+
   # Converts a nonempty list of KW-lists, e.g.:
   # [
   #   [{"headerA", "valueA1"}, {"headerB", "valueB1"}],
@@ -50,17 +62,29 @@ defmodule TransitData.GlidesReport.Util do
   @stop_filters GlidesReport.Terminals.all_labeled_stops_and_groups()
   defp stop_filters, do: @stop_filters
 
-  def build_csv_name(table_name, settings) do
+  def build_csv_name(table_name, loader_settings, filter_settings) do
     %{
       env_suffix: env_suffix,
-      date: date,
-      stop_ids: stop_ids,
-      limit_to_next_2_predictions: limit_to_next_2_predictions,
+      start_dt: start_dt,
+      end_dt: end_dt,
       sample_rate: sample_rate,
       sample_count: sample_count
-    } = settings
+    } = loader_settings
+
+    %{
+      stop_ids: stop_ids,
+      limit_to_next_2_predictions: limit_to_next_2_predictions
+    } = filter_settings
 
     env = if env_suffix == "", do: "prod", else: String.slice(env_suffix, 1..-1//1)
+
+    dt_range =
+      [start_dt, end_dt]
+      |> Enum.map(&DateTime.shift_zone!(&1, "America/New_York"))
+      |> Enum.map_join(
+        "-",
+        &(&1 |> DateTime.shift_zone!("America/New_York") |> Calendar.strftime("%xT%H:%M"))
+      )
 
     stop_filter =
       Enum.find_value(stop_filters(), fn {set, label} ->
@@ -85,6 +109,6 @@ defmodule TransitData.GlidesReport.Util do
         str -> ",#{str}"
       end
 
-    "Glides report - #{table_name} - #{env},#{date}#{optionals},#{sampling}.csv"
+    "Glides report - #{table_name} - #{env},#{dt_range}#{optionals},#{sampling}.csv"
   end
 end

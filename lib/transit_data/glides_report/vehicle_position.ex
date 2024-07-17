@@ -24,7 +24,7 @@ defmodule TransitData.GlidesReport.VehiclePosition do
       |> update_in(["vehicle", "trip"], &Map.take(&1, ["trip_id"]))
       |> update_in(
         ["vehicle"],
-        &Map.take(&1, ["timestamp", "current_status", "stop_id", "trip"])
+        &Map.take(&1, ["timestamp", "stop_id", "trip"])
       )
       |> Map.take(["id", "vehicle"])
     else

@@ -70,9 +70,31 @@ env_input =
     {"-sandbox", "sandbox"}
   ])
 
-today_eastern = DateTime.now!("America/New_York") |> DateTime.to_date()
-yesterday_eastern = today_eastern |> Date.add(-1)
-date_input = Kino.Input.date("Date", default: yesterday_eastern, max: today_eastern)
+today_date =
+  DateTime.now!("America/New_York")
+  |> DateTime.to_date()
+
+yesterday_date = Date.add(today_date, -1)
+
+# Default setting: Analyze a full service day, starting at 4am yesterday (Eastern) and ending at 4am today (Eastern).
+yesterday_start_time =
+  DateTime.new!(yesterday_date, ~T[04:00:00], "America/New_York")
+  |> DateTime.shift_zone!("Etc/UTC")
+  |> DateTime.to_naive()
+
+today_end_time =
+  DateTime.new!(today_date, ~T[03:59:59], "America/New_York")
+  |> DateTime.shift_zone!("Etc/UTC")
+  |> DateTime.to_naive()
+
+start_date_input =
+  Kino.Input.utc_datetime("Analyze data from...",
+    default: yesterday_start_time,
+    max: DateTime.utc_now()
+  )
+
+end_date_input =
+  Kino.Input.utc_datetime("to...", default: today_end_time, max: DateTime.utc_now())
 
 sample_rate_input =
   Kino.Input.range("Sample data at (?)-minute intervals", min: 1, max: 5, step: 1, default: 5)
@@ -80,13 +102,21 @@ sample_rate_input =
 samples_per_minute_input =
   Kino.Input.number("Take (?) samples per minute - leave blank for ALL", default: 1)
 
-[
-  env_input,
-  date_input,
-  sample_rate_input,
-  samples_per_minute_input
-]
-|> Kino.Layout.grid(columns: 2)
+Kino.Layout.grid(
+  [
+    env_input,
+    Kino.Layout.grid(
+      [
+        start_date_input,
+        end_date_input,
+        sample_rate_input,
+        samples_per_minute_input
+      ],
+      columns: 2
+    )
+  ],
+  columns: 1
+)
 ```
 
 ### Setting Details
@@ -103,8 +133,12 @@ samples_per_minute_input =
 Read inputs.
 
 ```elixir
-if is_nil(Kino.Input.read(date_input)) do
-  Kino.interrupt!(:error, "A date must be selected.")
+if is_nil(Kino.Input.read(start_date_input)) do
+  Kino.interrupt!(:error, "A start date must be selected.")
+end
+
+if is_nil(Kino.Input.read(end_date_input)) do
+  Kino.interrupt!(:error, "An end date must be selected.")
 end
 
 sample_count = Kino.Input.read(samples_per_minute_input)
@@ -113,10 +147,11 @@ if is_integer(sample_count) and sample_count <= 0 do
   Kino.interrupt!(:error, "Samples per minute must be either blank or a positive integer.")
 end
 
-settings =
-  GlidesReport.Settings.new(
+loader_settings =
+  GlidesReport.Settings.Load.new(
     Kino.Input.read(env_input),
-    Kino.Input.read(date_input),
+    Kino.Input.read(start_date_input),
+    Kino.Input.read(end_date_input),
     Kino.Input.read(sample_rate_input),
     Kino.Input.read(samples_per_minute_input)
   )
@@ -127,10 +162,11 @@ Load data into memory.
 ```elixir
 file_counts =
   GlidesReport.Loader.load_data(
-    settings.date,
-    settings.env_suffix,
-    settings.sample_rate,
-    settings.sample_count
+    loader_settings.start_dt,
+    loader_settings.end_dt,
+    loader_settings.env_suffix,
+    loader_settings.sample_rate,
+    loader_settings.sample_count
   )
 
 IO.puts("Found #{file_counts.local} existing local files.")
@@ -175,9 +211,8 @@ min_advance_notice_input = Kino.Input.number("Minimum advance notice (seconds)")
 Read inputs.
 
 ```elixir
-settings =
-  GlidesReport.Settings.set_filters(
-    settings,
+filter_settings =
+  GlidesReport.Settings.Filter.new(
     Kino.Input.read(stop_ids_input),
     Kino.Input.read(limit_to_next_2_predictions_input),
     Kino.Input.read(min_advance_notice_input)
@@ -196,16 +231,16 @@ trip_updates =
   # If a stop filter is set, apply it.
   # Also remove any entries that don't have a .departure.time value.
   # If filtered list is empty for any trip update, the trip update is removed entirely.
-  |> Stream.map(&GlidesReport.TripUpdate.filter_stops(&1, settings.stop_ids))
+  |> Stream.map(&GlidesReport.TripUpdate.filter_stops(&1, filter_settings.stop_ids))
   |> Stream.reject(&is_nil/1)
   |> Stream.map(
-    &GlidesReport.TripUpdate.filter_by_advance_notice(&1, settings.min_advance_notice_sec)
+    &GlidesReport.TripUpdate.filter_by_advance_notice(&1, filter_settings.min_advance_notice_sec)
   )
   |> Stream.reject(&is_nil/1)
 
 top_twos =
-  if settings.limit_to_next_2_predictions do
-    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(settings.stop_ids)
+  if filter_settings.limit_to_next_2_predictions do
+    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.stop_ids)
   else
     nil
   end
@@ -219,7 +254,7 @@ Filter vehicle positions based on your settings.
 # Vehicles are identified as departing a terminal if they are traveling
 # to the stop *following* that terminal.
 next_stops =
-  settings.stop_ids
+  filter_settings.stop_ids
   |> Enum.flat_map(&Map.fetch!(GlidesReport.Terminals.first_to_next_stop(), &1))
   |> MapSet.new()
 
@@ -350,7 +385,7 @@ Percentage will increase with more samples taken.
 
 Kino.Download.new(
   fn -> GlidesReport.Util.table_to_csv(table) end,
-  filename: GlidesReport.Util.build_csv_name(table_name, settings),
+  filename: GlidesReport.Util.build_csv_name(table_name, loader_settings, filter_settings),
   label: "Export as CSV"
 )
 |> Kino.render()
@@ -358,89 +393,4 @@ Kino.Download.new(
 Kino.DataTable.new(table, name: table_name)
 ```
 
-## Footnote: Data Structure
-
-Some typespecs to document the data structures we're working with.
-
-```elixir
-defmodule GlidesReport.Spec.Common do
-  @moduledoc "Shared types."
-
-  @type stop_id :: String.t()
-  @type trip_id :: String.t()
-  @type vehicle_id :: String.t()
-
-  # Unix epoch timestamp
-  @type timestamp :: integer
-end
-
-Kino.nothing()
-```
-
-Trip Update structure.
-
-```elixir
-defmodule GlidesReport.Spec.TripUpdate do
-  @moduledoc """
-  Structure of an entry in the :TripUpdates table--
-  a cleaned/pruned version of a TripUpdate.
-  """
-
-  alias GlidesReport.Common
-
-  @type t :: {key, value}
-
-  # Key is a string of the form "#{timestamp}_#{trip_id}"
-  # e.g. "1717524600_62216363"
-  # NB: This timestamp can be different from .trip_update.timestamp,
-  # it appears to be the time this snapshot was stored while
-  # .trip_update.timestamp is the time that the trip update was generated.
-  @type key :: String.t()
-
-  @type value :: %{
-          id: Common.trip_id(),
-          trip_update: %{
-            timestamp: Commmon.timestamp(),
-            stop_time_update:
-              list(%{
-                departure: %{time: Commmon.timestamp()},
-                stop_id: Commmon.stop_id()
-              })
-          }
-        }
-end
-```
-
-Vehicle Position structure.
-
-```elixir
-defmodule GlidesReport.Spec.VehiclePosition do
-  @moduledoc """
-  Structure of an entry in the :VehiclePositions table--
-  a cleaned/pruned version of a VehiclePosition.
-  """
-
-  alias GlidesReport.Common
-
-  @type t :: {key, value}
-
-  # Key is a string of the form "#{timestamp}_#{vehicle_id}"
-  # e.g. "1717471500_G-10351"
-  @type key :: String.t()
-
-  @type value :: %{
-          id: Common.vehicle_id(),
-          vehicle: %{
-            # "IN_TRANSIT_TO" | "STOPPED_AT" | "INCOMING_AT"
-            current_status: String.t(),
-            stop_id: Commmon.stop_id(),
-            timestamp: Commmon.timestamp(),
-            trip: %{
-              trip_id: Commmon.trip_id()
-            }
-          }
-        }
-end
-```
-
-<!-- livebook:{"offset":15537,"stamp":{"token":"XCP.sUImJmAn9JsLkdryg8sJpriD0VJhoqskPm7H9Kyffw0LEWSMksFWIWkdNA_PVmfA-BsiBL5NTRiGnO1TJmYvE81_Dbef-oDvGfVfEkZnnVp97ZnaOLBp9D-areGCnZtyCzzddCQtRNXGmBOhryCQRSwHCrr_zQ","version":2}} -->
+<!-- livebook:{"offset":14502,"stamp":{"token":"XCP.WPBwOCAr0o6lhXIkfTeVARS70waqbH-BW3GJQY9BGFBDrVni500VgpQLKFzNaUxY26Rs80HS6WmDXE7RrvDyJHhRl_CE7a5Tdlg75V1PVdvMJqj1aOOnYMUNLHgnGEn_Hzf0e6_LNjSdEGjNWexTdFkQiRyFmg","version":2}} -->
