@@ -30,6 +30,7 @@ defmodule TransitData.MixProject do
       # {:tzdata, "~> 1.1"},
       {:jaxon, "~> 2.0"},
       {:stream_gzip, "~> 0.4.2"},
+      {:sweet_xml, "~> 0.7.4"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end
