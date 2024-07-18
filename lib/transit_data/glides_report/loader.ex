@@ -361,7 +361,7 @@ defmodule TransitData.GlidesReport.Loader do
   defp load_file_into_table(table_name, local_path) do
     local_path
     |> File.read!()
-    |> :erlang.binary_to_term([:safe])
+    |> :erlang.binary_to_term()
     |> then(&:ets.insert(table_name, &1))
   end
 
