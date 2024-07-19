@@ -20,6 +20,18 @@ defmodule TransitData.GlidesReport.Util do
     |> String.pad_leading(count, "0")
   end
 
+  @spec group_by_hour(Enumerable.t({stop_id :: String.t(), timestamp :: integer})) :: %{
+          (hour :: 0..23) => MapSet.t({stop_id :: String.t(), minute :: 0..59})
+        }
+  def group_by_hour(stop_times) do
+    stop_times
+    |> Enum.group_by(
+      fn {_stop_id, timestamp} -> unix_timestamp_to_local_hour(timestamp) end,
+      fn {stop_id, timestamp} -> {stop_id, unix_timestamp_to_local_minute(timestamp)} end
+    )
+    |> Map.new(fn {hour, stop_minutes} -> {hour, MapSet.new(stop_minutes)} end)
+  end
+
   def unix_timestamp_to_local_hour(timestamp) do
     unix_timestamp_to_local_datetime(timestamp).hour
   end
@@ -34,8 +46,8 @@ defmodule TransitData.GlidesReport.Util do
     |> DateTime.shift_zone!("America/New_York")
   end
 
-  # Returns /absolute/path/to/project_root/downloads
-  def downloads_dir do
+  # Returns /absolute/path/to/transit_data_reports/dataset
+  def dataset_dir do
     # I'm sure there's a more concise way to do this, but I couldn't find it. :\
     project_root =
       __DIR__
@@ -43,7 +55,7 @@ defmodule TransitData.GlidesReport.Util do
       |> Enum.take_while(&(&1 != "lib"))
       |> Path.join()
 
-    Path.join(project_root, "downloads")
+    Path.join(project_root, "dataset")
   end
 
   # Converts a nonempty list of KW-lists, e.g.:
@@ -87,8 +99,8 @@ defmodule TransitData.GlidesReport.Util do
       )
 
     stop_filter =
-      Enum.find_value(stop_filters(), fn {set, label} ->
-        if MapSet.equal?(set, stop_ids), do: label
+      Enum.find_value(stop_filters(), fn {parent_ids_set, label} ->
+        if MapSet.equal?(parent_ids_set, stop_ids), do: label
       end)
 
     true = not is_nil(stop_filter)

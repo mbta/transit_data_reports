@@ -9,6 +9,7 @@ Mix.install(
     {:transit_data, path: project_dir},
     # transit_data needs a timezone DB for some date-related logic.
     {:tz, "~> 0.26.5"},
+    {:kino_vega_lite, "~> 0.1.11"}
   ],
   config: [
     elixir: [time_zone_database: Tz.TimeZoneDatabase],
@@ -25,8 +26,503 @@ alias TransitData.GlidesReport
 Kino.nothing()
 ```
 
-## Section
+## Instructions
+
+This notebook provides an implementation of [🚃 Build External Glides Terminal Departure Accuracy Report](https://app.asana.com/0/584764604969369/1206879941322109/f).
+
+The notebook requires AWS credentials for a user with access to the `mbta-gtfs-s3` family of S3 buckets.
+
+<details>
+<summary><kbd><strong>How to add your AWS credentials</strong></kbd></summary>
+<br/>
+
+---
+
+1. Open your Hub. [This link](/hub/personal-hub) should send you there.
+1. Under "Secrets", add two secrets with the following names:
+   - AWS_ACCESS_KEY_ID
+   - AWS_SECRET_ACCESS_KEY
+1. Return to this notebook. Click the 🔒 icon in the left sidebar and toggle on both secrets.
+
+---
+</details>
+
+### Generating a report
+
+Evaluate code cells from top to bottom.
+
+Some cells produce controls that let you adjust how the report runs.
+
+Cells that generate inputs / outputs are marked with a "👉"—you can skip to these, and when you evaluate them, any intermediate cells will automatically evaluate as well.
+
+**Tip:** If you want to generate another report with different settings, simply change the settings, scroll back down to [**Results**](#results), and click "Evaluate" again.
+
+## Setup
 
 ```elixir
+env_input =
+  Kino.Input.select("Environment", [
+    {"", "prod"},
+    {"-dev-blue", "dev-blue"},
+    {"-dev-green", "dev-green"},
+    {"-dev", "dev"},
+    {"-sandbox", "sandbox"}
+  ])
 
+today_date =
+  DateTime.utc_now()
+  |> DateTime.shift_zone!("America/New_York")
+  |> DateTime.to_date()
+
+yesterday_date = Date.add(today_date, -1)
+
+# Default setting: Analyze a full service day, starting at 4am yesterday (Eastern) and ending at 4am today (Eastern).
+yesterday_start_time =
+  DateTime.new!(yesterday_date, ~T[04:00:00], "America/New_York")
+  |> DateTime.shift_zone!("Etc/UTC")
+  |> DateTime.to_naive()
+
+today_end_time =
+  DateTime.new!(today_date, ~T[03:59:59], "America/New_York")
+  |> DateTime.shift_zone!("Etc/UTC")
+  |> DateTime.to_naive()
+
+start_date_input = Kino.Input.utc_datetime("Analyze data from...",
+        default: yesterday_start_time,
+        max: DateTime.utc_now()
+      )
+
+end_date_input = Kino.Input.utc_datetime("to...", default: today_end_time, max: DateTime.utc_now())
+
+sample_rate_input =
+  Kino.Input.range("Sample data at (?)-minute intervals", min: 1, max: 5, step: 1, default: 5)
+
+samples_per_minute_input =
+  Kino.Input.number("Take (?) samples per minute - leave blank for ALL", default: 1)
+
+Kino.Layout.grid([
+  env_input,
+  Kino.Layout.grid(
+    [
+      start_date_input,
+      end_date_input,
+      sample_rate_input,
+      samples_per_minute_input
+    ],
+    columns: 2
+  )
+])
 ```
+
+### Setting Details
+
+| Setting                             | Details                                                                                                                                                                                              |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Environment                         | Environment to analyze data from.                                                                                                                                                                    |
+| Analyze data from...                | Start analyzing data from this date/time.<br/>Default is 4am yesterday, Eastern.                                                                                                                     |
+| to...                               | Analyze data up to this date/time.<br/>Default is 3:59am today, Eastern.                                                                                                                             |
+| Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                    |
+| Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.<br/>Leave blank to analyze *all* data within each sampled minute. (slowest) |
+
+<!-- livebook:{"break_markdown":true} -->
+
+Read inputs.
+
+```elixir
+start_dt = Kino.Input.read(start_date_input)
+end_dt = Kino.Input.read(end_date_input)
+
+if is_nil(start_dt) do
+  Kino.interrupt!(:error, "A start date/time must be selected.")
+end
+
+if is_nil(end_dt) do
+  Kino.interrupt!(:error, "An end date/time must be selected.")
+end
+
+if NaiveDateTime.diff(end_dt, start_dt, :hour) >= 24 do
+  Kino.interrupt!(
+    :error,
+    "Sorry, time windows of 24 hours or more are not yet supported.\n" <>
+      "(If this was unexpected, check whether the window includes the autumn DST change.)"
+  )
+end
+
+if NaiveDateTime.diff(end_dt, start_dt) <= 0 do
+  Kino.interrupt!(:error, "Start date needs to come before end date.")
+end
+
+sample_count = Kino.Input.read(samples_per_minute_input)
+
+if is_integer(sample_count) and sample_count <= 0 do
+  Kino.interrupt!(:error, "Samples per minute must be either blank or a positive integer.")
+end
+
+loader_settings =
+  GlidesReport.Settings.Load.new(
+    Kino.Input.read(env_input),
+    Kino.Input.read(start_date_input),
+    Kino.Input.read(end_date_input),
+    Kino.Input.read(sample_rate_input),
+    Kino.Input.read(samples_per_minute_input)
+  )
+```
+
+Load data into memory.
+
+```elixir
+file_counts =
+  GlidesReport.Loader.load_data(
+    loader_settings.start_dt,
+    loader_settings.end_dt,
+    loader_settings.env_suffix,
+    loader_settings.sample_rate,
+    loader_settings.sample_count
+  )
+
+IO.puts("Found #{file_counts.local} existing local files.")
+IO.puts("Downloaded #{file_counts.downloaded} new files.")
+
+# Uncomment to inspect the ETS tables:
+# Kino.Layout.grid([
+#   Kino.ETS.new(:TripUpdates),
+#   Kino.ETS.new(:VehiclePositions)
+# ], columns: 2)
+Kino.nothing()
+```
+
+### 👉 Now, choose how you want to filter the data.
+
+```elixir
+stop_ids_input =
+  Kino.Input.select("Stop(s)", GlidesReport.Terminals.all_labeled_stops_and_groups())
+
+limit_to_next_2_predictions_input = Kino.Input.checkbox("Simulate countdown clocks?")
+
+min_advance_notice_input = Kino.Input.number("Minimum advance notice (seconds)")
+
+[
+  stop_ids_input,
+  limit_to_next_2_predictions_input,
+  min_advance_notice_input
+]
+|> Kino.Layout.grid(columns: 3)
+```
+
+### Setting Details
+
+| Setting                          | Details                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop(s)                          | Only analyze data concerning a specific stop, or group of stops.<br/><br/>**Note: Terminals that do not have Glides predictions—Heath Street and Ashmont—are ignored regardless of which stop(s) you select.**                                                                                                                      |
+| Simulate countdown clocks?       | Only consider predictions that would have appeared on countdown clocks—those that were in the next 2 predictions for a stop at some point.                                                                                                                                                                                            |
+| Minimum advance notice (seconds) | Only consider predictions created at least this many seconds in advance of the departure time they predict.<br/><br/>For example: If this were set to `60`, then a prediction generated at 12:00:00, with departure time predicted for 12:00:59, would be omitted from analysis.<br/><br/>Leave the field blank to disable this filter. |
+
+<!-- livebook:{"break_markdown":true} -->
+
+Read inputs.
+
+```elixir
+filter_settings =
+  GlidesReport.Settings.Filter.new(
+    Kino.Input.read(stop_ids_input),
+    Kino.Input.read(limit_to_next_2_predictions_input),
+    Kino.Input.read(min_advance_notice_input)
+  )
+```
+
+## Main procedure
+
+Filter trip updates based on your settings.
+
+```elixir
+trip_updates =
+  :TripUpdates
+  |> GlidesReport.Util.stream_values()
+  |> Stream.map(&GlidesReport.TripUpdate.normalize_stop_ids/1)
+  # Filter each trip update's stop_time_update list.
+  # If filtered list is empty for any trip update, the trip update is removed entirely.
+  |> Stream.map(&GlidesReport.TripUpdate.filter_stops(&1, filter_settings.stop_ids))
+  |> Stream.reject(&is_nil/1)
+  |> Stream.map(
+    &GlidesReport.TripUpdate.filter_by_advance_notice(&1, filter_settings.min_advance_notice_sec)
+  )
+  |> Stream.reject(&is_nil/1)
+
+top_twos =
+  if filter_settings.limit_to_next_2_predictions do
+    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.stop_ids)
+  else
+    nil
+  end
+
+Kino.nothing()
+```
+
+Filter vehicle positions based on your settings.
+
+```elixir
+vehicle_positions =
+  :VehiclePositions
+  |> GlidesReport.Util.stream_values()
+  |> Stream.map(&GlidesReport.VehiclePosition.normalize_stop_id/1)
+  |> Stream.filter(&(&1.vehicle.stop_id in filter_settings.stop_ids))
+  |> GlidesReport.VehiclePosition.dedup_statuses()
+
+Kino.nothing()
+```
+
+Compute accuracy under a range of bucket sizes. (Or `variances`, in the code)
+
+```elixir
+variances = [1, 2, 3, 5, 10]
+
+##################
+# OVERALL VALUES #
+##################
+
+predicted_departure_times =
+  trip_updates
+  |> Stream.flat_map(fn tr_upd ->
+    Enum.map(
+      tr_upd.trip_update.stop_time_update,
+      &{&1.stop_id, &1.departure.time}
+    )
+  end)
+  |> then(fn stream ->
+    if not is_nil(top_twos) do
+      Stream.filter(stream, &(&1 in top_twos))
+    else
+      stream
+    end
+  end)
+  |> MapSet.new()
+
+actual_departure_times =
+  MapSet.new(vehicle_positions, &{&1.vehicle.stop_id, &1.vehicle.timestamp})
+
+merge_sorted_ranges = fn l1.._r1//1, _l2..r2//1 ->
+  l1..r2//1
+end
+
+# Combines any consecutive, overlapping ranges in a pre-sorted list.
+merge_ranges = fn ranges ->
+  Enum.chunk_while(
+    ranges,
+    nil,
+    fn
+      range, nil ->
+        {:cont, range}
+
+      range, acc_range ->
+        if Range.disjoint?(range, acc_range),
+          do: {:cont, acc_range, range},
+          else: {:cont, merge_sorted_ranges.(acc_range, range)}
+    end,
+    fn final_acc -> {:cont, final_acc, nil} end
+  )
+end
+
+# %{
+#   variance => %{
+#     stop_id => [actual_departure_range1, actual_departure_range2, ...]
+#   }
+# }
+actual_departure_windows_by_variance =
+  Map.new(variances, fn variance ->
+    # Convert to seconds, to match up with vehicle.timestamp
+    variance_sec = variance * 60
+
+    time_ranges_by_stop_id =
+      actual_departure_times
+      |> Enum.group_by(fn {stop_id, _} -> stop_id end, fn {_, timestamp} -> timestamp end)
+      |> Map.new(fn {stop_id, timestamps} ->
+        time_ranges =
+          timestamps
+          |> Enum.sort()
+          |> Enum.map(fn t -> (t - variance_sec)..(t + variance_sec)//1 end)
+          |> merge_ranges.()
+
+        {stop_id, time_ranges}
+      end)
+
+    {variance, time_ranges_by_stop_id}
+  end)
+
+# %{
+#   variance => MapSet.t({stop_id, minute})
+# }
+accurate_predictions_by_variance =
+  Map.new(variances, fn variance ->
+    # lookup the actuals
+    accuracy_windows_by_stop = Map.fetch!(actual_departure_windows_by_variance, variance)
+
+    accurate_predictions =
+      predicted_departure_times
+      |> Enum.filter(fn {stop_id, predicted_departure_time} ->
+        accuracy_windows_by_stop
+        |> Map.get(stop_id, [])
+        |> Enum.any?(fn window -> predicted_departure_time in window end)
+      end)
+      |> MapSet.new()
+
+    {variance, accurate_predictions}
+  end)
+
+###########################
+# VALUES BUCKETED BY HOUR #
+###########################
+
+predicted_departure_times_by_hour = GlidesReport.Util.group_by_hour(predicted_departure_times)
+actual_departure_times_by_hour = GlidesReport.Util.group_by_hour(actual_departure_times)
+
+# %{
+#   hour => %{
+#     %{
+#       variance => MapSet.t({stop_id, minute})
+#     }
+#   }
+# }
+accurate_predictions_by_variance_by_hour =
+  accurate_predictions_by_variance
+  # First, flatten the map while maintaining all data
+  |> Enum.flat_map(fn {variance, stop_times} ->
+    Enum.map(stop_times, &{variance, &1})
+  end)
+  # Then, group by hour.
+  |> Enum.group_by(
+    fn {_variance, {_stop_id, timestamp}} -> GlidesReport.Util.unix_timestamp_to_local_hour(timestamp) end,
+    fn {variance, {stop_id, timestamp}} -> {variance, {stop_id, GlidesReport.Util.unix_timestamp_to_local_minute(timestamp)}} end
+  )
+  # Then, re-build the variance => stop_times map within each hour bucket.
+  |> Map.new(fn {hour, values} ->
+    accurate_predictions_by_variance =
+      Enum.group_by(values,
+        fn {variance, _} -> variance end,
+        fn {_, stop_time} -> stop_time end
+      )
+      |> Map.new(fn {variance, stop_times} -> {variance, MapSet.new(stop_times)} end)
+
+    {hour, accurate_predictions_by_variance}
+  end)
+
+Kino.nothing()
+```
+
+## 👉 Results
+
+### Per-Hour Counts of trips for which RTR made departure predictions vs. actual departures
+
+Methodology:
+
+* From VehiclePositions, get all timestamps (truncated to minute) at which a vehicle actually departed a stop.[^1]
+* From TripUpdates, get all timestamps (truncated to minute) at which a vehicle was predicted to depart a stop.[^2]
+* If a predicted departure time was within some number of minutes from the actual departure time at the same stop, then that prediction is considered accurate. Each prediction is evaluated for accuracy under a number of different minute ranges: 1, 2, 3, 5, and 10 minutes.
+
+---
+
+[^1]: There is no "departing stop" vehicle status, so we look for events where the vehicle is "IN_TRANSIT_TO" or "INCOMING_AT" the stop _after_ the target stop.
+[^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
+
+```elixir
+table =
+  0..23
+  # Service day starts at 4am, so let's start the table at that hour.
+  |> Enum.map(&rem(&1 + 4, 24))
+  |> Enum.map(fn hour ->
+    predicted_departure_time_count =
+      predicted_departure_times_by_hour
+      |> Map.get(hour, MapSet.new())
+      |> MapSet.size()
+
+    actual_departure_time_count =
+      actual_departure_times_by_hour
+      |> Map.get(hour, MapSet.new())
+      |> MapSet.size()
+
+    accurate_predictions_by_variance =
+      accurate_predictions_by_variance_by_hour
+      |> Map.get(hour, Map.new(variances, &{&1, MapSet.new()}))
+
+    bucket_columns =
+      variances
+      |> Enum.flat_map(fn variance ->
+        accurate_prediction_count =
+          accurate_predictions_by_variance
+          |> Map.get(variance, MapSet.new())
+          |> MapSet.size()
+
+        percentage =
+          if predicted_departure_time_count > 0 do
+            p =
+              round(100.0 * (accurate_prediction_count / predicted_departure_time_count))
+
+            "#{p}%"
+          else
+            "N/A"
+          end
+
+        [
+          {"# accurate (± #{variance})", accurate_prediction_count},
+          {"% accurate (± #{variance})", percentage}
+        ]
+      end)
+
+    [
+      {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
+      {"# predictions", predicted_departure_time_count},
+      {"# departures", actual_departure_time_count}
+    ] ++ bucket_columns
+  end)
+
+table_name = "Prediction accuracy by bucket"
+
+Kino.Download.new(
+  fn -> GlidesReport.Util.table_to_csv(table) end,
+  filename: GlidesReport.Util.build_csv_name(table_name, loader_settings, filter_settings),
+  label: "Export as CSV"
+)
+|> Kino.render()
+
+Kino.DataTable.new(table, name: table_name)
+```
+
+```elixir
+overall_prediction_count = MapSet.size(predicted_departure_times)
+
+accuracy_percentages_by_variance =
+  variances
+  |> Enum.map(fn variance ->
+    accurate_prediction_count =
+      accurate_predictions_by_variance
+      |> Map.get(variance, MapSet.new())
+      |> MapSet.size()
+
+    percentage =
+      if overall_prediction_count > 0 do
+        round(100.0 * (accurate_prediction_count / overall_prediction_count))
+      else
+        "N/A"
+      end
+
+    %{
+      "Bucket size (± n minutes)" => variance,
+      "Accuracy (% of total predictions)" => percentage
+    }
+  end)
+
+Kino.nothing()
+```
+
+<!-- livebook:{"attrs":"eyJjaGFydF90aXRsZSI6IlBlcmNlbnQgYWNjdXJhdGUgYnkgYnVja2V0IHNpemUiLCJoZWlnaHQiOjMwMCwibGF5ZXJzIjpbeyJhY3RpdmUiOnRydWUsImNoYXJ0X3R5cGUiOiJiYXIiLCJjb2xvcl9maWVsZCI6bnVsbCwiY29sb3JfZmllbGRfYWdncmVnYXRlIjpudWxsLCJjb2xvcl9maWVsZF9iaW4iOm51bGwsImNvbG9yX2ZpZWxkX3NjYWxlX3NjaGVtZSI6bnVsbCwiY29sb3JfZmllbGRfdHlwZSI6bnVsbCwiZGF0YV92YXJpYWJsZSI6ImFjY3VyYWN5X3BlcmNlbnRhZ2VzX2J5X3ZhcmlhbmNlIiwiZ2VvZGF0YV9jb2xvciI6ImJsdWUiLCJsYXRpdHVkZV9maWVsZCI6bnVsbCwibG9uZ2l0dWRlX2ZpZWxkIjpudWxsLCJ4X2ZpZWxkIjoiQnVja2V0IHNpemUgKMKxIG4gbWludXRlcykiLCJ4X2ZpZWxkX2FnZ3JlZ2F0ZSI6bnVsbCwieF9maWVsZF9iaW4iOm51bGwsInhfZmllbGRfc2NhbGVfdHlwZSI6bnVsbCwieF9maWVsZF90eXBlIjoicXVhbnRpdGF0aXZlIiwieV9maWVsZCI6IkFjY3VyYWN5ICglIG9mIHRvdGFsIHByZWRpY3Rpb25zKSIsInlfZmllbGRfYWdncmVnYXRlIjpudWxsLCJ5X2ZpZWxkX2JpbiI6bnVsbCwieV9maWVsZF9zY2FsZV90eXBlIjpudWxsLCJ5X2ZpZWxkX3R5cGUiOiJxdWFudGl0YXRpdmUifV0sInZsX2FsaWFzIjoiRWxpeGlyLlZlZ2FMaXRlIiwid2lkdGgiOjUwMH0","chunks":null,"kind":"Elixir.KinoVegaLite.ChartCell","livebook_object":"smart_cell"} -->
+
+```elixir
+VegaLite.new(width: 500, height: 300, title: "Percent accurate by bucket size")
+|> VegaLite.data_from_values(accuracy_percentages_by_variance,
+  only: ["Bucket size (± n minutes)", "Accuracy (% of total predictions)"]
+)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:x, "Bucket size (± n minutes)", type: :quantitative)
+|> VegaLite.encode_field(:y, "Accuracy (% of total predictions)", type: :quantitative)
+```
+
+<!-- livebook:{"offset":18932,"stamp":{"token":"XCP.xFsqgukCTO0oUO1x6eRWQxFWlpgfzZ50uHWiemgB030Axqy-pQLSM7zl7MW3WtyqyMWNNfG75y92GrYeJJx283liBr_leROLM8P-AOai0o0Ek3e0LdMzojDNr3SRLUgo2oOarGRqLnPfU2YTfKJAKWmu1yVFIg","version":2}} -->

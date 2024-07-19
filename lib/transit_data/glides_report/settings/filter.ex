@@ -2,8 +2,9 @@ defmodule TransitData.GlidesReport.Settings.Filter do
   @moduledoc "User-selected filtering settings."
 
   @type t :: %__MODULE__{
-          stop_ids: MapSet.t(String.t()) | nil,
-          limit_to_next_2_predictions: boolean | nil,
+          # A set of parent stop IDs
+          stop_ids: MapSet.t(String.t()),
+          limit_to_next_2_predictions: boolean,
           min_advance_notice_sec: pos_integer | nil
         }
 
@@ -13,7 +14,6 @@ defmodule TransitData.GlidesReport.Settings.Filter do
     :min_advance_notice_sec
   ]
 
-  # Adds filtering settings.
   @spec new(MapSet.t(String.t()), boolean, pos_integer | nil) :: t()
   def new(stop_ids, limit_to_next_2_predictions, min_advance_notice) do
     %__MODULE__{

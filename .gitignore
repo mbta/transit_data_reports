@@ -26,4 +26,4 @@ transit_data_reports-*.tar
 /tmp/
 
 # Files downloaded by notebooks.
-/downloads/
+/dataset/

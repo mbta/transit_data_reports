@@ -18,6 +18,9 @@ defmodule TransitData.GlidesReport.Spec.VehiclePosition do
           vehicle: %{
             # "IN_TRANSIT_TO" | "STOPPED_AT" | "INCOMING_AT"
             current_status: String.t(),
+            # A child stop ID initially, but we convert it to the
+            # parent stop ID of the relevant terminal by calling
+            # GlidesReport.VehiclePosition.normalize_stop_id/1 on it.
             stop_id: Common.stop_id(),
             timestamp: Common.timestamp(),
             trip: %{

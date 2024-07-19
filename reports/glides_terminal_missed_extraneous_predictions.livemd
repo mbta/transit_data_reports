@@ -27,7 +27,7 @@ Kino.nothing()
 
 ## Instructions
 
-This notebook provides an implementation of https://www.notion.so/mbta-downtown-crossing/Rethinking-Prediction-Accuracy-for-Glides-e99561127b01490689135ab6b70cd33c
+This notebook provides an implementation of [Rethinking Prediction Accuracy for Glides](https://www.notion.so/mbta-downtown-crossing/Rethinking-Prediction-Accuracy-for-Glides-e99561127b01490689135ab6b70cd33c).
 
 The notebook requires AWS credentials for a user with access to the `mbta-gtfs-s3` family of S3 buckets.
 
@@ -133,12 +133,27 @@ Kino.Layout.grid(
 Read inputs.
 
 ```elixir
-if is_nil(Kino.Input.read(start_date_input)) do
-  Kino.interrupt!(:error, "A start date must be selected.")
+start_dt = Kino.Input.read(start_date_input)
+end_dt = Kino.Input.read(end_date_input)
+
+if is_nil(start_dt) do
+  Kino.interrupt!(:error, "A start date/time must be selected.")
 end
 
-if is_nil(Kino.Input.read(end_date_input)) do
-  Kino.interrupt!(:error, "An end date must be selected.")
+if is_nil(end_dt) do
+  Kino.interrupt!(:error, "An end date/time must be selected.")
+end
+
+if NaiveDateTime.diff(end_dt, start_dt, :hour) >= 24 do
+  Kino.interrupt!(
+    :error,
+    "Sorry, time windows of 24 hours or more are not yet supported.\n" <>
+      "(If this was unexpected, check whether the window includes the autumn DST change.)"
+  )
+end
+
+if NaiveDateTime.diff(end_dt, start_dt) <= 0 do
+  Kino.interrupt!(:error, "Start date needs to come before end date.")
 end
 
 sample_count = Kino.Input.read(samples_per_minute_input)
@@ -227,9 +242,8 @@ Filter trip updates based on your settings.
 trip_updates =
   :TripUpdates
   |> GlidesReport.Util.stream_values()
+  |> Stream.map(&GlidesReport.TripUpdate.normalize_stop_ids/1)
   # Filter each trip update's stop_time_update list.
-  # If a stop filter is set, apply it.
-  # Also remove any entries that don't have a .departure.time value.
   # If filtered list is empty for any trip update, the trip update is removed entirely.
   |> Stream.map(&GlidesReport.TripUpdate.filter_stops(&1, filter_settings.stop_ids))
   |> Stream.reject(&is_nil/1)
@@ -251,18 +265,70 @@ Kino.nothing()
 Filter vehicle positions based on your settings.
 
 ```elixir
-# Vehicles are identified as departing a terminal if they are traveling
-# to the stop *following* that terminal.
-next_stops =
-  filter_settings.stop_ids
-  |> Enum.flat_map(&Map.fetch!(GlidesReport.Terminals.first_to_next_stop(), &1))
-  |> MapSet.new()
-
 vehicle_positions =
   :VehiclePositions
   |> GlidesReport.Util.stream_values()
-  |> Stream.filter(&(&1.vehicle.stop_id in next_stops))
+  |> Stream.map(&GlidesReport.VehiclePosition.normalize_stop_id/1)
+  |> Stream.filter(&(&1.vehicle.stop_id in filter_settings.stop_ids))
   |> GlidesReport.VehiclePosition.dedup_statuses()
+
+Kino.nothing()
+```
+
+Compute sets of predicted departure times and sets of actual departure times,
+
+```elixir
+predicted_departure_times_by_hour =
+  trip_updates
+  # Group by hour of the predicted departure (not hour the prediction was generated!),
+  # in local time.
+  # This requires splitting each trip update into its individual stop_time_update items.
+  |> Stream.flat_map(fn tr_upd ->
+    Enum.map(
+      tr_upd.trip_update.stop_time_update,
+      &{&1.stop_id, &1.departure.time}
+    )
+  end)
+  |> then(fn stream ->
+    if not is_nil(top_twos) do
+      Stream.filter(stream, &(&1 in top_twos))
+    else
+      stream
+    end
+  end)
+  |> GlidesReport.Util.group_by_hour()
+
+actual_departure_times_by_hour =
+  vehicle_positions
+  |> Stream.map(&{&1.vehicle.stop_id, &1.vehicle.timestamp})
+  |> GlidesReport.Util.group_by_hour()
+
+predicted_percentages_by_hour =
+  0..23
+  |> Map.new(fn hour ->
+    predicted_departure_times = Map.get(predicted_departure_times_by_hour, hour, MapSet.new())
+
+    actual_departure_times = Map.get(actual_departure_times_by_hour, hour, MapSet.new())
+
+    actual_departure_time_count = MapSet.size(actual_departure_times)
+
+    # Number of departure times that were both predicted and actually happened.
+    actual_AND_predicted_departure_time_count =
+      MapSet.intersection(predicted_departure_times, actual_departure_times)
+      |> MapSet.size()
+
+    percentage =
+      if actual_departure_time_count > 0 do
+        p =
+          round(100.0 * (actual_AND_predicted_departure_time_count / actual_departure_time_count))
+
+        "#{p}%"
+      else
+        "N/A (0 actual departures)"
+      end
+
+    {hour, percentage}
+  end)
 
 Kino.nothing()
 ```
@@ -283,84 +349,22 @@ Methodology:
 [^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
 
 ```elixir
-predicted_first_stop_departure_times_by_hour =
-  trip_updates
-  # Group by hour of the predicted departure (not hour the prediction was generated!),
-  # in local time.
-  # This requires splitting each trip update into its individual stop_time_update items.
-  |> Stream.flat_map(fn tr_upd ->
-    Enum.map(
-      tr_upd.trip_update.stop_time_update,
-      &{&1.stop_id, &1.departure.time}
-    )
-  end)
-  |> then(fn stream ->
-    if not is_nil(top_twos) do
-      Stream.filter(stream, &(&1 in top_twos))
-    else
-      stream
-    end
-  end)
-  |> Enum.group_by(
-    fn {_first_stop_id, timestamp} ->
-      GlidesReport.Util.unix_timestamp_to_local_hour(timestamp)
-    end,
-    fn {first_stop_id, timestamp} ->
-      {first_stop_id, GlidesReport.Util.unix_timestamp_to_local_minute(timestamp)}
-    end
-  )
-  |> Map.new(fn {hour, first_stop_minutes} -> {hour, MapSet.new(first_stop_minutes)} end)
-
-actual_next_stop_in_transit_to_times_by_hour =
-  vehicle_positions
-  |> Stream.map(&{&1.vehicle.stop_id, &1.vehicle.timestamp})
-  |> Enum.group_by(
-    fn {_next_stop_id, timestamp} ->
-      GlidesReport.Util.unix_timestamp_to_local_hour(timestamp)
-    end,
-    fn {next_stop_id, timestamp} ->
-      {next_stop_id, GlidesReport.Util.unix_timestamp_to_local_minute(timestamp)}
-    end
-  )
-  |> Map.new(fn {hour, next_stop_minutes} -> {hour, MapSet.new(next_stop_minutes)} end)
-
 table =
   0..23
   # Service day starts at 4am, so let's start the table at that hour.
   |> Enum.map(&rem(&1 + 4, 24))
   |> Enum.map(fn hour ->
-    predicted_first_stop_departure_times =
-      Map.get(predicted_first_stop_departure_times_by_hour, hour, MapSet.new())
+    predicted_departure_time_count =
+      predicted_departure_times_by_hour
+      |> Map.get(hour, MapSet.new())
+      |> MapSet.size()
 
-    actual_next_stop_in_transit_to_times =
-      Map.get(actual_next_stop_in_transit_to_times_by_hour, hour, MapSet.new())
+    actual_departure_time_count =
+      actual_departure_times_by_hour
+      |> Map.get(hour, MapSet.new())
+      |> MapSet.size()
 
-    predicted_departure_time_count = MapSet.size(predicted_first_stop_departure_times)
-    actual_departure_time_count = MapSet.size(actual_next_stop_in_transit_to_times)
-
-    # Number of departure times that were both predicted and actually happened.
-    #
-    # Need to do a custom set intersection for this, because we need to relate first_stops in
-    # predictions with next_stops in actuals, and the relation is many:1.
-    actual_AND_predicted_departure_time_count =
-      Enum.count(actual_next_stop_in_transit_to_times, fn {next_stop_id, minute} ->
-        valid_first_stop_ids =
-          Map.fetch!(GlidesReport.Terminals.next_to_first_stop(), next_stop_id)
-
-        Enum.any?(valid_first_stop_ids, fn id ->
-          {id, minute} in predicted_first_stop_departure_times
-        end)
-      end)
-
-    percentage =
-      if actual_departure_time_count > 0 do
-        p =
-          round(100.0 * (actual_AND_predicted_departure_time_count / actual_departure_time_count))
-
-        "#{p}%"
-      else
-        "N/A (0 actual departures)"
-      end
+    percentage = Map.fetch!(predicted_percentages_by_hour, hour)
 
     [
       {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
@@ -393,4 +397,4 @@ Kino.Download.new(
 Kino.DataTable.new(table, name: table_name)
 ```
 
-<!-- livebook:{"offset":14502,"stamp":{"token":"XCP.WPBwOCAr0o6lhXIkfTeVARS70waqbH-BW3GJQY9BGFBDrVni500VgpQLKFzNaUxY26Rs80HS6WmDXE7RrvDyJHhRl_CE7a5Tdlg75V1PVdvMJqj1aOOnYMUNLHgnGEn_Hzf0e6_LNjSdEGjNWexTdFkQiRyFmg","version":2}} -->
+<!-- livebook:{"offset":14086,"stamp":{"token":"XCP.EA7CphXHatF57SUKbDN1_xwoECJf2zQtkzTZAwVtkCKHkYF05WxoXKv3L-FRHpz5leYZYhftdaWMgKAWzGXV_PZsbLa2SiXqSeeZpoXnasBc531fQiainqMYKoRE6vprYImgFriH78iBm8MHZVUA7NGB9w8g5w","version":2}} -->

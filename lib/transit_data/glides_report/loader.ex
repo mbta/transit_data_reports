@@ -6,7 +6,7 @@ defmodule TransitData.GlidesReport.Loader do
 
   # If a breaking change is made to how files are saved or how their data is structured,
   # this value lets us make a clean break to a new directory for downloads.
-  defp report_version, do: "1.0"
+  defp loader_version, do: "1.1"
 
   @doc """
   Loads data into ETS tables, and returns counts of files found locally vs downloaded.
@@ -23,7 +23,9 @@ defmodule TransitData.GlidesReport.Loader do
   def load_data(start_dt, end_dt, env_suffix, sample_rate, sample_count) do
     dir = local_dir(env_suffix)
 
-    IO.puts("Data downloaded for this report will be saved in #{dir}.\n")
+    IO.puts(
+      "Data downloaded for this report will be saved in\n#{IO.ANSI.format([:underline, dir])}.\n"
+    )
 
     File.mkdir_p!(dir)
     File.cd!(dir)
@@ -251,7 +253,7 @@ defmodule TransitData.GlidesReport.Loader do
   end
 
   defp local_dir("-" <> env) do
-    Path.join([Util.downloads_dir(), "glides_report", report_version(), env])
+    Path.join([Util.dataset_dir(), "glides_report", loader_version(), env])
   end
 
   defp local_dir(""), do: local_dir("-prod")
@@ -363,7 +365,7 @@ defmodule TransitData.GlidesReport.Loader do
   defp load_file_into_table(table_name, local_path) do
     local_path
     |> File.read!()
-    |> :erlang.binary_to_term([:safe])
+    |> :erlang.binary_to_term()
     |> then(&:ets.insert(table_name, &1))
   end
 

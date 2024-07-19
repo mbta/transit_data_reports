@@ -34,6 +34,14 @@ defmodule TransitData.GlidesReport.VehiclePosition do
 
   def clean_up(_), do: nil
 
+  def normalize_stop_id(ve_pos) do
+    update_in(
+      ve_pos,
+      [:vehicle, :stop_id],
+      &GlidesReport.Terminals.normalize_stop_id/1
+    )
+  end
+
   # Prevents double-counting of actual departure times caused by multiple vehicle positions
   # being logged for a single vehicle's travel between two stops.
   #
