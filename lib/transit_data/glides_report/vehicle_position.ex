@@ -24,7 +24,7 @@ defmodule TransitData.GlidesReport.VehiclePosition do
       |> update_in(["vehicle", "trip"], &Map.take(&1, ["trip_id"]))
       |> update_in(
         ["vehicle"],
-        &Map.take(&1, ["timestamp", "current_status", "stop_id", "trip"])
+        &Map.take(&1, ["timestamp", "stop_id", "trip"])
       )
       |> Map.take(["id", "vehicle"])
     else
@@ -33,6 +33,14 @@ defmodule TransitData.GlidesReport.VehiclePosition do
   end
 
   def clean_up(_), do: nil
+
+  def normalize_stop_id(ve_pos) do
+    update_in(
+      ve_pos,
+      [:vehicle, :stop_id],
+      &GlidesReport.Terminals.normalize_stop_id/1
+    )
+  end
 
   # Prevents double-counting of actual departure times caused by multiple vehicle positions
   # being logged for a single vehicle's travel between two stops.

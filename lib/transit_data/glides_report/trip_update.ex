@@ -36,6 +36,14 @@ defmodule TransitData.GlidesReport.TripUpdate do
     nil
   end
 
+  def normalize_stop_ids(tr_upd) do
+    update_in(
+      tr_upd,
+      [:trip_update, :stop_time_update, Access.all(), :stop_id],
+      &GlidesReport.Terminals.normalize_stop_id/1
+    )
+  end
+
   defp clean_up_stop_times(stop_times) do
     stop_times
     # Ignore stop times that aren't relevant to Glides terminals.
@@ -55,15 +63,15 @@ defmodule TransitData.GlidesReport.TripUpdate do
     end)
   end
 
+  # Removes, from a trip update's stop_time_update, all entries that don't apply to the target stop(s).
+  # Returns nil if trip update doesn't contain any relevant stop times.
   def filter_stops(tr_upd, stop_ids) do
-    case filter_stops_by_stop_id(tr_upd, stop_ids) do
-      nil ->
+    case Enum.filter(tr_upd.trip_update.stop_time_update, &(&1.stop_id in stop_ids)) do
+      [] ->
         nil
 
-      tr_upd ->
-        update_in(tr_upd.trip_update.stop_time_update, fn stop_time_update ->
-          Enum.reject(stop_time_update, &is_nil(get_in(&1, [:departure, :time])))
-        end)
+      filtered_stop_times ->
+        put_in(tr_upd.trip_update.stop_time_update, filtered_stop_times)
     end
   end
 
@@ -75,17 +83,5 @@ defmodule TransitData.GlidesReport.TripUpdate do
     update_in(tr_upd.trip_update.stop_time_update, fn stop_times ->
       Enum.filter(stop_times, &(&1.departure.time - time_of_creation >= min_advance_notice_sec))
     end)
-  end
-
-  # Removes, from a trip update's stop_time_update, all entries that don't apply to the target stop(s).
-  # Returns nil if trip update doesn't contain any relevant stop times.
-  defp filter_stops_by_stop_id(tr_upd, stop_ids) do
-    case Enum.filter(tr_upd.trip_update.stop_time_update, &(&1.stop_id in stop_ids)) do
-      [] ->
-        nil
-
-      filtered_stop_times ->
-        put_in(tr_upd.trip_update.stop_time_update, filtered_stop_times)
-    end
   end
 end

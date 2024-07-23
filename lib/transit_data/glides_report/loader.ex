@@ -1,19 +1,30 @@
 defmodule TransitData.GlidesReport.Loader do
   @moduledoc "Functions to load Trip Updates and Vehicle Positions into memory."
 
+  alias TransitData.GlidesReport.Util
   alias TransitData.GlidesReport
 
   # If a breaking change is made to how files are saved or how their data is structured,
   # this value lets us make a clean break to a new directory for downloads.
-  defp report_version, do: "1.0"
+  defp loader_version, do: "1.1"
 
-  @doc "Loads data into ETS tables, and returns counts of files found locally vs downloaded."
-  def load_data(date, env_suffix, sample_rate, sample_count) do
+  @doc """
+  Loads data into ETS tables, and returns counts of files found locally vs downloaded.
+
+  `start_dt` and `end_dt` are NaiveDateTimes assumed to be in UTC.
+  """
+  @spec load_data(
+          NaiveDateTime.t(),
+          NaiveDateTime.t(),
+          String.t(),
+          pos_integer,
+          pos_integer | :all
+        ) :: %{local: non_neg_integer, downloaded: non_neg_integer}
+  def load_data(start_dt, end_dt, env_suffix, sample_rate, sample_count) do
     dir = local_dir(env_suffix)
 
     IO.puts(
-      "Data downloaded for this report will be saved in your temp directory,\n" <>
-        "at: #{IO.ANSI.format([:underline, dir])}.\n"
+      "Data downloaded for this report will be saved in\n#{IO.ANSI.format([:underline, dir])}.\n"
     )
 
     File.mkdir_p!(dir)
@@ -24,23 +35,16 @@ defmodule TransitData.GlidesReport.Loader do
 
     s3_bucket = "mbta-gtfs-s3#{env_suffix}"
 
-    # Service day is a 24-hr period starting at 4am on the selected date.
-    start_time = DateTime.new!(date, Time.new!(4, 0, 0), "America/New_York")
+    start_dt_utc = DateTime.from_naive!(start_dt, "Etc/UTC")
+    end_dt_utc = DateTime.from_naive!(end_dt, "Etc/UTC")
 
-    end_time =
-      DateTime.new!(date, Time.new!(3, 59, 59), "America/New_York")
-      |> DateTime.shift(day: 1)
-
-    total_minutes = DateTime.diff(end_time, start_time, :minute)
+    total_minutes = DateTime.diff(end_dt_utc, start_dt_utc, :minute)
     total_increments = div(total_minutes, sample_rate)
-
-    # Shift start_time to UTC to align with the UTC timestamps used in our S3 object names
-    start_time_utc = DateTime.shift_zone!(start_time, "Etc/UTC")
 
     # Prefixes used to list S3 objects timestamped within the same minute.
     minute_prefixes =
       Enum.map(0..total_increments, fn increment ->
-        start_time_utc
+        start_dt_utc
         |> DateTime.add(increment * sample_rate, :minute)
         |> Calendar.strftime("%Y/%m/%d/%Y-%m-%dT%H:%M")
       end)
@@ -56,7 +60,7 @@ defmodule TransitData.GlidesReport.Loader do
 
     if Enum.any?(Task.yield_many(deletion_tasks, timeout: 1), &is_nil/1) do
       IO.puts("Waiting for previous table(s) to finish deleting...")
-      Task.await_many(deletion_tasks, timeout: :infinity)
+      Task.await_many(Enum.reject(deletion_tasks, &is_nil/1), :infinity)
       IO.puts("Done.")
     end
 
@@ -249,7 +253,7 @@ defmodule TransitData.GlidesReport.Loader do
   end
 
   defp local_dir("-" <> env) do
-    Path.join([System.tmp_dir!(), "glides_report", report_version(), env])
+    Path.join([Util.dataset_dir(), "glides_report", loader_version(), env])
   end
 
   defp local_dir(""), do: local_dir("-prod")

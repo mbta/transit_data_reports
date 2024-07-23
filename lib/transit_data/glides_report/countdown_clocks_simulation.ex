@@ -36,6 +36,7 @@ defmodule TransitData.GlidesReport.CountdownClocksSimulation do
   defp trip_updates_for_simulation(stop_ids) do
     :TripUpdates
     |> GlidesReport.Util.stream_values()
+    |> Stream.map(&GlidesReport.TripUpdate.normalize_stop_ids/1)
     # Filter each trip update's stop_time_update to just the user's selected stops.
     # If filtered list is empty for any trip update, the trip update is removed entirely.
     |> Stream.map(&GlidesReport.TripUpdate.filter_stops(&1, stop_ids))

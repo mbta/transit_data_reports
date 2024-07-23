@@ -7,38 +7,15 @@ This repository provides a common place to store
 
 ## Setup
 
-1. Install Livebook, either through Poetry or the desktop app. (Desktop app
+1. Clone or download this repository.
+2. Install Livebook, either through Poetry or the desktop app. (Desktop app
    recommended)
-2. Create (or rename the default) a Hub to contain all of the MBTA / Transit
+3. Create a Hub (or rename the default) to contain all of the MBTA / Transit
    Data reports.
-3. Add the report(s) you wish to run to a Hub.
-4. Add secret(s) to the Hub.
-
-When starting a new notebook file, paste the following into its setup cell to
-pull in the TransitData library in /lib:
-```ex
-# Assuming this notebook is saved in /reports...
-project_dir = __DIR__ |> Path.join("..") |> Path.expand()
-
-Mix.install(
-  [
-    {:kino, "~> 0.12.0"},
-    {:transit_data, path: project_dir},
-    # transit_data needs a timezone DB for some date-related logic.
-    {:tz, "~> 0.26.5"},
-    # Put any additional libraries needed by this notebook here.
-  ],
-  config: [
-    elixir: [time_zone_database: Tz.TimeZoneDatabase],
-    # (Assuming your notebook needs to access data in S3)
-    ex_aws: [
-      access_key_id: System.get_env("LB_AWS_ACCESS_KEY_ID"),
-      secret_access_key: System.get_env("LB_AWS_SECRET_ACCESS_KEY"),
-      region: "us-east-1"
-    ]
-  ]
-)
-```
+4. Add the report(s) you wish to run to a Hub.\
+   Make sure to open them _in situ_—they need to be located in the reports/
+   directory for certain code to work properly.
+5. Add secret(s) to the Hub.
 
 ## Secrets
 
@@ -48,6 +25,9 @@ environment variables in code). For right now, it is exclusively for AWS access,
 but if more services need to be accessed, this is where the API keys should be
 stored. The naming convention follows the pattern of `SOME_SECRET_NAME`
 resulting in an environment variable `LB_SOME_SECRET_NAME` in the code context.
+
+You will most likely need to add `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+secrets at minimum.
 
 To register and use a secret within Livebook:
 1. Go to your Hub. There should be a link to it in the left sidebar.
@@ -72,6 +52,32 @@ If your report has any logic that:
 
 consider putting that logic in lib/ instead of a code cell within your
 notebook.
+
+When starting a new notebook file, paste the following into its setup cell to
+pull in the TransitData library:
+```ex
+# Assuming this notebook is saved in /reports...
+project_dir = __DIR__ |> Path.join("..") |> Path.expand()
+
+Mix.install(
+  [
+    {:kino, "~> 0.12.0"},
+    {:transit_data, path: project_dir},
+    # transit_data needs a timezone DB for some date-related logic.
+    {:tz, "~> 0.26.5"},
+    # Put any additional libraries needed by this notebook here.
+  ],
+  config: [
+    elixir: [time_zone_database: Tz.TimeZoneDatabase],
+    # (Assuming your notebook needs to access data in S3)
+    ex_aws: [
+      access_key_id: System.get_env("LB_AWS_ACCESS_KEY_ID"),
+      secret_access_key: System.get_env("LB_AWS_SECRET_ACCESS_KEY"),
+      region: "us-east-1"
+    ]
+  ]
+)
+```
 
 Note that if you have a notebook open in Livebook and make changes to the
 library code, you'll need to re-run the notebook's setup cell to pick up your
