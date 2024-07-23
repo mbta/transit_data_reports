@@ -87,12 +87,18 @@ today_end_time =
   |> DateTime.shift_zone!("Etc/UTC")
   |> DateTime.to_naive()
 
-start_date_input = Kino.Input.utc_datetime("Analyze data from...",
-        default: yesterday_start_time,
-        max: DateTime.utc_now()
-      )
+# Simple date input
+date_input = Kino.Input.date("Date", default: yesterday_date, max: today_date)
 
-end_date_input = Kino.Input.utc_datetime("to...", default: today_end_time, max: DateTime.utc_now())
+# Advanced start/end datetime inputs
+start_date_input =
+  Kino.Input.utc_datetime("Analyze data from...",
+    default: yesterday_start_time,
+    max: DateTime.utc_now()
+  )
+
+end_date_input =
+  Kino.Input.utc_datetime("to...", default: today_end_time, max: DateTime.utc_now())
 
 sample_rate_input =
   Kino.Input.range("Sample data at (?)-minute intervals", min: 1, max: 5, step: 1, default: 5)
@@ -100,56 +106,91 @@ sample_rate_input =
 samples_per_minute_input =
   Kino.Input.number("Take (?) samples per minute - leave blank for ALL", default: 1)
 
-Kino.Layout.grid([
-  env_input,
-  Kino.Layout.grid(
-    [
-      start_date_input,
-      end_date_input,
-      sample_rate_input,
-      samples_per_minute_input
-    ],
-    columns: 2
-  )
-])
+use_advanced_date_input =
+  Kino.Input.select("Use advanced date/time input?", nil: "", false: "No", true: "Yes")
+
+frame = Kino.Frame.new(placeholder: false)
+
+update_frame = fn
+  nil ->
+    Kino.Frame.clear(frame)
+
+  use_advanced_date ->
+    Kino.Frame.clear(frame)
+
+    {content, doc_table_fragment} =
+      if use_advanced_date do
+        content =
+          Kino.Layout.grid(
+            [
+              env_input,
+              Kino.Layout.grid(
+                [
+                  start_date_input,
+                  end_date_input,
+                  sample_rate_input,
+                  samples_per_minute_input
+                ],
+                columns: 2
+              )
+            ],
+            columns: 1
+          )
+
+        fragment = """
+        | Analyze data from... | Start analyzing data from this date/time.<br/>Default is 4am yesterday, Eastern. |
+        | to...                | Analyze data up to this date/time.<br/>Default is 3:59am today, Eastern.         |
+        """
+
+        {content, fragment}
+      else
+        content =
+          Kino.Layout.grid(
+            [
+              env_input,
+              date_input,
+              sample_rate_input,
+              samples_per_minute_input
+            ],
+            columns: 2
+          )
+
+        fragment = """
+        | Date | Service date to analyze data from. A 24-hour period starting at 4am Eastern. |
+        """
+
+        {content, fragment}
+      end
+
+    doc_table =
+      Kino.Markdown.new("""
+      ### Setting Details
+
+      | Setting                             | Details                                                                                                                                                                                              |
+      | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+      | Environment                         | Environment to analyze data from.                                                                                                                                                                    |
+      #{String.trim_trailing(doc_table_fragment)}
+      | Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                    |
+      | Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.<br/>Leave blank to analyze *all* data within each sampled minute. (slowest) |
+      """)
+
+    Kino.Frame.append(frame, content)
+    Kino.Frame.append(frame, doc_table)
+end
+
+# Update the form content whenever the "Use advanced input?" toggle changes.
+Kino.listen(use_advanced_date_input, fn %{value: value} -> update_frame.(value) end)
+
+Kino.render(use_advanced_date_input)
+frame
 ```
-
-### Setting Details
-
-| Setting                             | Details                                                                                                                                                                                              |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Environment                         | Environment to analyze data from.                                                                                                                                                                    |
-| Analyze data from...                | Start analyzing data from this date/time.<br/>Default is 4am yesterday, Eastern.                                                                                                                     |
-| to...                               | Analyze data up to this date/time.<br/>Default is 3:59am today, Eastern.                                                                                                                             |
-| Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                    |
-| Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.<br/>Leave blank to analyze *all* data within each sampled minute. (slowest) |
-
-<!-- livebook:{"break_markdown":true} -->
 
 Read inputs.
 
 ```elixir
-start_dt = Kino.Input.read(start_date_input)
-end_dt = Kino.Input.read(end_date_input)
-
-if is_nil(start_dt) do
-  Kino.interrupt!(:error, "A start date/time must be selected.")
-end
-
-if is_nil(end_dt) do
-  Kino.interrupt!(:error, "An end date/time must be selected.")
-end
-
-if NaiveDateTime.diff(end_dt, start_dt, :hour) >= 24 do
-  Kino.interrupt!(
-    :error,
-    "Sorry, time windows of 24 hours or more are not yet supported.\n" <>
-      "(If this was unexpected, check whether the window includes the autumn DST change.)"
-  )
-end
-
-if NaiveDateTime.diff(end_dt, start_dt) <= 0 do
-  Kino.interrupt!(:error, "Start date needs to come before end date.")
+# Some manual validation:
+if is_nil(Kino.Input.read(use_advanced_date_input)) do
+  Kino.interrupt!(:error, ~s|Please choose an option in the "Use advanced date/time input?" dropdown.|)
 end
 
 sample_count = Kino.Input.read(samples_per_minute_input)
@@ -158,14 +199,55 @@ if is_integer(sample_count) and sample_count <= 0 do
   Kino.interrupt!(:error, "Samples per minute must be either blank or a positive integer.")
 end
 
+if Kino.Input.read(use_advanced_date_input) do
+  start_dt = Kino.Input.read(start_date_input)
+  end_dt = Kino.Input.read(end_date_input)
+
+  if is_nil(start_dt) do
+    Kino.interrupt!(:error, "A start date/time must be selected.")
+  end
+
+  if is_nil(end_dt) do
+    Kino.interrupt!(:error, "An end date/time must be selected.")
+  end
+
+  if NaiveDateTime.diff(end_dt, start_dt, :hour) >= 24 do
+    Kino.interrupt!(
+      :error,
+      "Sorry, time windows of 24 hours or more are not yet supported.\n" <>
+        "(If this was unexpected, check whether the window includes the autumn DST change.)"
+    )
+  end
+
+  if NaiveDateTime.diff(end_dt, start_dt) <= 0 do
+    Kino.interrupt!(:error, "Start date needs to come before end date.")
+  end
+else
+  date = Kino.Input.read(date_input)
+
+  if is_nil(date) do
+    Kino.interrupt!(:error, "A date must be selected.")
+  end
+end
+
+# Inputs are valid. Drop them into a settings struct.
 loader_settings =
-  GlidesReport.Settings.Load.new(
-    Kino.Input.read(env_input),
-    Kino.Input.read(start_date_input),
-    Kino.Input.read(end_date_input),
-    Kino.Input.read(sample_rate_input),
-    Kino.Input.read(samples_per_minute_input)
-  )
+  if Kino.Input.read(use_advanced_date_input) do
+    GlidesReport.Settings.Load.new(
+      Kino.Input.read(env_input),
+      Kino.Input.read(start_date_input) |> DateTime.from_naive!("Etc/UTC"),
+      Kino.Input.read(end_date_input)  |> DateTime.from_naive!("Etc/UTC"),
+      Kino.Input.read(sample_rate_input),
+      Kino.Input.read(samples_per_minute_input)
+    )
+  else
+    GlidesReport.Settings.Load.new(
+      Kino.Input.read(env_input),
+      Kino.Input.read(date_input),
+      Kino.Input.read(sample_rate_input),
+      Kino.Input.read(samples_per_minute_input)
+    )
+  end
 ```
 
 Load data into memory.
@@ -525,4 +607,4 @@ VegaLite.new(width: 500, height: 300, title: "Percent accurate by bucket size")
 |> VegaLite.encode_field(:y, "Accuracy (% of total predictions)", type: :quantitative)
 ```
 
-<!-- livebook:{"offset":18932,"stamp":{"token":"XCP.xFsqgukCTO0oUO1x6eRWQxFWlpgfzZ50uHWiemgB030Axqy-pQLSM7zl7MW3WtyqyMWNNfG75y92GrYeJJx283liBr_leROLM8P-AOai0o0Ek3e0LdMzojDNr3SRLUgo2oOarGRqLnPfU2YTfKJAKWmu1yVFIg","version":2}} -->
+<!-- livebook:{"offset":21029,"stamp":{"token":"XCP.Da1TlzqZcqy_Wbap5iTYy1a2RDY7X9ygtb-ZFfR6jAOkzLndM42zIq8T21iB8pQ3asA6gzRCw-7QHQrWBXFtfRsli5dp7kYd9lzat5KNrzQrSxTDEh3Au6zi60hJrdaSrVoZ0nlQ1deOfBXLJQmmR_h8UE5tWg","version":2}} -->
