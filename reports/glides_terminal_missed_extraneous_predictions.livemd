@@ -318,6 +318,15 @@ filter_settings =
 Filter trip updates based on your settings.
 
 ```elixir
+alias TransitData.GlidesReport.Departure
+
+top_twos =
+  if filter_settings.limit_to_next_2_predictions do
+    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.stop_ids)
+  else
+    nil
+  end
+
 trip_updates =
   :TripUpdates
   |> GlidesReport.Util.stream_values()
@@ -330,13 +339,24 @@ trip_updates =
     &GlidesReport.TripUpdate.filter_by_advance_notice(&1, filter_settings.min_advance_notice_sec)
   )
   |> Stream.reject(&is_nil/1)
-
-top_twos =
-  if filter_settings.limit_to_next_2_predictions do
-    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.stop_ids)
-  else
-    nil
-  end
+  # Split each trip update into its individual stop_time_update items.
+  # Note that we use the timestamp of the predicted departure,
+  # not the timestamp of when the prediction was generated.
+  |> Stream.flat_map(fn tr_upd ->
+    Enum.map(
+      tr_upd.trip_update.stop_time_update,
+      &Departure.new(tr_upd.trip_update.trip.trip_id, &1.stop_id, &1.departure.time)
+    )
+  end)
+  # Apply the "appeared on countdown clocks" filter, if it's enabled.
+  |> then(fn stream ->
+    if not is_nil(top_twos) do
+      Stream.filter(stream, &({&1.stop, &1.timestamp} in top_twos))
+    else
+      stream
+    end
+  end)
+  |> Enum.to_list()
 
 Kino.nothing()
 ```
@@ -350,6 +370,8 @@ vehicle_positions =
   |> Stream.map(&GlidesReport.VehiclePosition.normalize_stop_id/1)
   |> Stream.filter(&(&1.vehicle.stop_id in filter_settings.stop_ids))
   |> GlidesReport.VehiclePosition.dedup_statuses()
+  |> Stream.map(&Departure.new(&1.vehicle.trip.trip_id, &1.vehicle.stop_id, &1.vehicle.timestamp))
+  |> Enum.to_list()
 
 Kino.nothing()
 ```
@@ -357,54 +379,78 @@ Kino.nothing()
 Compute sets of predicted departure times and sets of actual departure times,
 
 ```elixir
-predicted_departure_times_by_hour =
-  trip_updates
-  # Group by hour of the predicted departure (not hour the prediction was generated!),
-  # in local time.
-  # This requires splitting each trip update into its individual stop_time_update items.
-  |> Stream.flat_map(fn tr_upd ->
-    Enum.map(
-      tr_upd.trip_update.stop_time_update,
-      &{&1.stop_id, &1.departure.time}
-    )
+predictions_by_hour = Enum.group_by(trip_updates, &(&1.hour))
+departures_by_hour = Enum.group_by(vehicle_positions, &(&1.hour))
+
+#################################################
+# Departure/prediction metrics by stop and time #
+# (Gives the rider's perspective)               #
+#################################################
+predicted_times_by_hour =
+  Map.new(predictions_by_hour, fn {hour, departures} ->
+    {hour, MapSet.new(departures, &{&1.stop, &1.minute})}
   end)
-  |> then(fn stream ->
-    if not is_nil(top_twos) do
-      Stream.filter(stream, &(&1 in top_twos))
-    else
-      stream
-    end
+
+actual_times_by_hour =
+  Map.new(departures_by_hour, fn {hour, departures} ->
+    {hour, MapSet.new(departures, &{&1.stop, &1.minute})}
   end)
-  |> GlidesReport.Util.group_by_hour()
 
-actual_departure_times_by_hour =
-  vehicle_positions
-  |> Stream.map(&{&1.vehicle.stop_id, &1.vehicle.timestamp})
-  |> GlidesReport.Util.group_by_hour()
+predicted_time_percentages_by_hour =
+  Map.new(0..23, fn hour ->
+    predicted_times = Map.get(predicted_times_by_hour, hour, MapSet.new())
+    actual_times = Map.get(actual_times_by_hour, hour, MapSet.new())
 
-predicted_percentages_by_hour =
-  0..23
-  |> Map.new(fn hour ->
-    predicted_departure_times = Map.get(predicted_departure_times_by_hour, hour, MapSet.new())
-
-    actual_departure_times = Map.get(actual_departure_times_by_hour, hour, MapSet.new())
-
-    actual_departure_time_count = MapSet.size(actual_departure_times)
+    actual_time_count = MapSet.size(actual_times)
 
     # Number of departure times that were both predicted and actually happened.
-    actual_AND_predicted_departure_time_count =
-      MapSet.intersection(predicted_departure_times, actual_departure_times)
+    actual_AND_predicted_time_count =
+      MapSet.intersection(predicted_times, actual_times)
       |> MapSet.size()
 
     percentage =
-      if actual_departure_time_count > 0 do
-        p =
-          round(100.0 * (actual_AND_predicted_departure_time_count / actual_departure_time_count))
-
-        "#{p}%"
-      else
+      GlidesReport.Util.format_percent(
+        actual_AND_predicted_time_count,
+        actual_time_count,
         "N/A (0 actual departures)"
-      end
+      )
+
+    {hour, percentage}
+  end)
+
+#################################################
+# Departure/prediction metrics by stop and trip #
+# (A more internal performance metric)          #
+#################################################
+predicted_trips_by_hour =
+  Map.new(predictions_by_hour, fn {hour, departures} ->
+    {hour, MapSet.new(departures, &{&1.stop, &1.trip})}
+  end)
+
+actual_trips_by_hour =
+  Map.new(departures_by_hour, fn {hour, departures} ->
+    {hour, MapSet.new(departures, &{&1.stop, &1.trip})}
+  end)
+
+predicted_trip_percentages_by_hour =
+  Map.new(0..23, fn hour ->
+    predicted_trips = Map.get(predicted_trips_by_hour, hour, MapSet.new())
+    actual_trips = Map.get(actual_trips_by_hour, hour, MapSet.new())
+
+    actual_trip_count = MapSet.size(actual_trips)
+
+    # Number of departures (represented as stop X trip)
+    # that were both predicted and actually happened.
+    actual_AND_predicted_trip_count =
+      MapSet.intersection(predicted_trips, actual_trips)
+      |> MapSet.size()
+
+    percentage =
+      GlidesReport.Util.format_percent(
+        actual_AND_predicted_trip_count,
+        actual_trip_count,
+        "N/A (0 actual departures)"
+      )
 
     {hour, percentage}
   end)
@@ -421,6 +467,7 @@ Methodology:
 * From VehiclePositions, get all timestamps (truncated to minute) at which a vehicle actually departed a stop.[^1]
 * From TripUpdates, get all timestamps (truncated to minute) at which a vehicle was predicted to depart a stop.[^2]
 * If a vehicle actually departed stop S at the same minute that a vehicle was predicted to depart stop S, then that prediction is considered accurate.
+* Also compute the above, but with predictions collapsed by trip ID
 
 ---
 
@@ -428,32 +475,54 @@ Methodology:
 [^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
 
 ```elixir
-table =
+times_table =
   0..23
   # Service day starts at 4am, so let's start the table at that hour.
   |> Enum.map(&rem(&1 + 4, 24))
   |> Enum.map(fn hour ->
-    predicted_departure_time_count =
-      predicted_departure_times_by_hour
+    predicted_time_count =
+      predicted_times_by_hour
       |> Map.get(hour, MapSet.new())
       |> MapSet.size()
 
-    actual_departure_time_count =
-      actual_departure_times_by_hour
+    actual_time_count =
+      actual_times_by_hour
       |> Map.get(hour, MapSet.new())
       |> MapSet.size()
 
-    percentage = Map.fetch!(predicted_percentages_by_hour, hour)
+    time_percentage = Map.fetch!(predicted_time_percentages_by_hour, hour)
 
     [
       {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
-      {"# of predicted departure times", predicted_departure_time_count},
-      {"# of actual departure times", actual_departure_time_count},
-      {"% of actual departure times that were also predicted", percentage}
+      {"# of predicted departure times", predicted_time_count},
+      {"# of actual departure times", actual_time_count},
+      {"% of actual departure times that were also predicted", time_percentage}
     ]
   end)
 
-table_name = "Predicted vs actual departures"
+trips_table =
+  0..23
+  |> Enum.map(&rem(&1 + 4, 24))
+  |> Enum.map(fn hour ->
+    predicted_trip_count =
+      predicted_trips_by_hour
+      |> Map.get(hour, MapSet.new())
+      |> MapSet.size()
+
+    actual_trip_count =
+      actual_trips_by_hour
+      |> Map.get(hour, MapSet.new())
+      |> MapSet.size()
+
+    trip_percentage = Map.fetch!(predicted_trip_percentages_by_hour, hour)
+
+    [
+      {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
+      {"# of predicted departures collapsed by trip", predicted_trip_count},
+      {"# of actual departures collapsed by trip", actual_trip_count},
+      {"% of predicted departures collapsed by trip", trip_percentage}
+    ]
+  end)
 
 Kino.Markdown.new("""
 ### 📣 Please note:
@@ -466,14 +535,28 @@ Percentage will increase with more samples taken.
 """)
 |> Kino.render()
 
+times_table_name = "Predicted vs actual departures"
+
 Kino.Download.new(
-  fn -> GlidesReport.Util.table_to_csv(table) end,
-  filename: GlidesReport.Util.build_csv_name(table_name, loader_settings, filter_settings),
+  fn -> GlidesReport.Util.table_to_csv(times_table) end,
+  filename: GlidesReport.Util.build_csv_name(times_table_name, loader_settings, filter_settings),
   label: "Export as CSV"
 )
 |> Kino.render()
 
-Kino.DataTable.new(table, name: table_name)
+Kino.DataTable.new(times_table, name: times_table_name)
+|> Kino.render()
+
+trips_table_name = "Predicted vs actual trips"
+
+Kino.Download.new(
+  fn -> GlidesReport.Util.table_to_csv(trips_table) end,
+  filename: GlidesReport.Util.build_csv_name(trips_table_name, loader_settings, filter_settings),
+  label: "Export as CSV"
+)
+|> Kino.render()
+
+Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":16421,"stamp":{"token":"XCP.RfcqZU8gKfuLX_eScRmEIoAb_09nBNeE4jJtKrdGZcOJLAU0maAXFAlC7FTKMaBJog36xKL3KRzqGCkiCO15iV11EuEPhDipSsq0vTRZ_vQcC-pl7vynhQn-AJL_WHXzQw1rUGQqCvnWvPL81VXPq20HxXPtuw","version":2}} -->
+<!-- livebook:{"offset":19208,"stamp":{"token":"XCP.dUajChiLoZGl02encH9QYC7bkGQ-qtUwyC5X-FeVWXJOxdL6SsSsKTFQTBUVZVbisP-f-aL8DyEL0teaCrwt2-O5TGwK3-l1Q3AThtlc3y-rBiJ0YvduWg4rDuul-C4yP0lIdObD-C1klPGnWlLzFkMSRDNUhQ","version":2}} -->

@@ -20,16 +20,17 @@ defmodule TransitData.GlidesReport.Util do
     |> String.pad_leading(count, "0")
   end
 
-  @spec group_by_hour(Enumerable.t({stop_id :: String.t(), timestamp :: integer})) :: %{
-          (hour :: 0..23) => MapSet.t({stop_id :: String.t(), minute :: 0..59})
-        }
-  def group_by_hour(stop_times) do
-    stop_times
-    |> Enum.group_by(
-      fn {_stop_id, timestamp} -> unix_timestamp_to_local_hour(timestamp) end,
-      fn {stop_id, timestamp} -> {stop_id, unix_timestamp_to_local_minute(timestamp)} end
-    )
-    |> Map.new(fn {hour, stop_minutes} -> {hour, MapSet.new(stop_minutes)} end)
+  @doc """
+  Formats the ratio of two numbers as a percentage.
+  """
+  @spec format_percent(number, number, String.t()) :: String.t()
+  def format_percent(_numerator, denominator, zero_fallback) when denominator == 0 do
+    zero_fallback
+  end
+
+  def format_percent(numerator, denominator, _zero_fallback) do
+    p = round(100.0 * (numerator / denominator))
+    "#{p}%"
   end
 
   def unix_timestamp_to_local_hour(timestamp) do
