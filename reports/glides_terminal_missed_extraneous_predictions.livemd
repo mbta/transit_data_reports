@@ -467,7 +467,7 @@ Methodology:
 * From VehiclePositions, get all timestamps (truncated to minute) at which a vehicle actually departed a stop.[^1]
 * From TripUpdates, get all timestamps (truncated to minute) at which a vehicle was predicted to depart a stop.[^2]
 * If a vehicle actually departed stop S at the same minute that a vehicle was predicted to depart stop S, then that prediction is considered accurate.
-* Also compute the above, but with predictions collapsed by trip ID
+* Also compute the above, but with predictions and departures compared by trip ID instead of timestamp.
 
 ---
 
@@ -559,4 +559,4 @@ Kino.Download.new(
 Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":19208,"stamp":{"token":"XCP.dUajChiLoZGl02encH9QYC7bkGQ-qtUwyC5X-FeVWXJOxdL6SsSsKTFQTBUVZVbisP-f-aL8DyEL0teaCrwt2-O5TGwK3-l1Q3AThtlc3y-rBiJ0YvduWg4rDuul-C4yP0lIdObD-C1klPGnWlLzFkMSRDNUhQ","version":2}} -->
+<!-- livebook:{"offset":19244,"stamp":{"token":"XCP.YPz_ovuJ6IQLJGyw9Xt5LSb29Ad82LAaNC5aD_K8112H_yOJrTy0VTfLp86pNYp2_i4aSJSJCOEEVlYSY3vBEFiAOR3xq8jp9urFy2ZqSdiqo6e2cqJJy5-R1emam7-wythlf1hfwXv-tMecJAfFlNv4UjdZ2Q","version":2}} -->
