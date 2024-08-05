@@ -4,20 +4,16 @@ defmodule TransitData.GlidesReport.UtilTest do
   alias TransitData.GlidesReport.Util
 
   describe "stream_values/1" do
-    setup do
-      table = :ets.new(TransitData.GlidesReport.UtilTest.Table)
-      on_exit(fn -> :ets.delete(table) end)
+    test "streams values from a table" do
+      table = :ets.new(__MODULE__.StreamValuesTable, [])
 
-      %{table: table}
-    end
-
-    test "streams values from a table", %{table: table} do
       objects = [a: 1, b: 2, c: 3, d: 4]
       :ets.insert(table, objects)
 
-      from_stream = Util.stream_values(table)
+      values = Keyword.values(objects)
+      values_stream = Util.stream_values(table)
 
-      assert Enum.sort(objects) == Enum.sort(from_stream)
+      assert Enum.sort(values) == Enum.sort(values_stream)
     end
   end
 end
