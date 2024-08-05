@@ -7,7 +7,14 @@ defmodule TransitData.MixProject do
       version: "0.1.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      dialyzer: [
+        plt_add_deps: :app_tree,
+        flags: [
+          :unmatched_returns
+        ]
+      ],
+      test_coverage: [tool: LcovEx]
     ]
   end
 
@@ -31,7 +38,9 @@ defmodule TransitData.MixProject do
       {:jaxon, "~> 2.0"},
       {:stream_gzip, "~> 0.4.2"},
       {:sweet_xml, "~> 0.7.4"},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:lcov_ex, "~> 0.3", only: [:dev, :test], runtime: false}
     ]
   end
 end
