@@ -27,3 +27,7 @@ transit_data_reports-*.tar
 
 # Files downloaded by notebooks.
 /dataset/
+
+# Dialyzer creates Persistent Lookup Table files to cache its analysis of the project.
+/priv/plts/*.plt
+/priv/plts/*.plt.hash
