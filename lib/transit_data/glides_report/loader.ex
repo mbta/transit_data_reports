@@ -6,7 +6,7 @@ defmodule TransitData.GlidesReport.Loader do
 
   # If a breaking change is made to how files are saved or how their data is structured,
   # this value lets us make a clean break to a new directory for downloads.
-  defp loader_version, do: "1.1"
+  defp loader_version, do: "1.2"
 
   @doc """
   Loads data into ETS tables, and returns counts of files found locally vs downloaded.

@@ -18,10 +18,11 @@ defmodule TransitData.GlidesReport.TripUpdate do
         header_timestamp
       ) do
     tr_upd
-    |> update_in(["trip_update", "stop_time_update"], &clean_up_stop_times/1)
     # If the trip update is missing a timestamp, substitute the timestamp from the header.
     |> update_in(["trip_update", "timestamp"], &(&1 || header_timestamp))
-    |> update_in(["trip_update"], &Map.take(&1, ["timestamp", "stop_time_update"]))
+    |> update_in(["trip_update", "stop_time_update"], &clean_up_stop_times/1)
+    |> update_in(["trip_update", "trip"], &Map.take(&1, ["trip_id"]))
+    |> update_in(["trip_update"], &Map.take(&1, ["timestamp", "stop_time_update", "trip"]))
     |> then(fn cleaned_tr_upd ->
       # If all stop times have been removed, discard the entire trip update.
       if Enum.empty?(cleaned_tr_upd["trip_update"]["stop_time_update"]) do
