@@ -10,10 +10,10 @@ defmodule TransitData.GlidesReport.UtilTest do
       objects = [a: 1, b: 2, c: 3, d: 4]
       :ets.insert(table, objects)
 
-      values = Keyword.values(objects)
+      expected_values = [1, 2, 3, 4]
       values_stream = Util.stream_values(table)
 
-      assert Enum.sort(values) == Enum.sort(values_stream)
+      assert expected_values == Enum.sort(values_stream)
     end
   end
 end
