@@ -1,8 +1,8 @@
 defmodule TransitData.GlidesReport.Loader do
   @moduledoc "Functions to load Trip Updates and Vehicle Positions into memory."
 
-  alias TransitData.GlidesReport.Util
   alias TransitData.GlidesReport
+  alias TransitData.GlidesReport.Util
 
   # If a breaking change is made to how files are saved or how their data is structured,
   # this value lets us make a clean break to a new directory for downloads.
