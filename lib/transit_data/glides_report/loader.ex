@@ -416,11 +416,12 @@ defmodule TransitData.GlidesReport.Loader do
         Task.async(fn -> :ets.delete(:"#{table}_OLD") end)
       end
 
-    _ = :ets.new(table, [
-      :named_table,
-      :public,
-      write_concurrency: :auto
-    ])
+    _ =
+      :ets.new(table, [
+        :named_table,
+        :public,
+        write_concurrency: :auto
+      ])
 
     deletion_task
   end
