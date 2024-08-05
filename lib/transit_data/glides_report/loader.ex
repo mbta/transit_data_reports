@@ -60,7 +60,7 @@ defmodule TransitData.GlidesReport.Loader do
 
     if Enum.any?(Task.yield_many(deletion_tasks, timeout: 1), &is_nil/1) do
       IO.puts("Waiting for previous table(s) to finish deleting...")
-      Task.await_many(Enum.reject(deletion_tasks, &is_nil/1), :infinity)
+      _ = Task.await_many(Enum.reject(deletion_tasks, &is_nil/1), :infinity)
       IO.puts("Done.")
     end
 
@@ -416,7 +416,7 @@ defmodule TransitData.GlidesReport.Loader do
         Task.async(fn -> :ets.delete(:"#{table}_OLD") end)
       end
 
-    :ets.new(table, [
+    _ = :ets.new(table, [
       :named_table,
       :public,
       write_concurrency: :auto
