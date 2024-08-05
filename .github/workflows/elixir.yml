@@ -73,4 +73,9 @@ jobs:
         with:
           name: elixir-lcov
           path: cover/
+      - name: Report coverage
+        uses: kefasjw/lcov-pull-request-report@v1
+        with:
+          lcov-file: cover/lcov.info
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: mbta/actions/dialyzer@v1
