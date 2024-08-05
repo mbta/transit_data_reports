@@ -1,8 +1,8 @@
 defmodule TransitData.GlidesReport.Loader do
   @moduledoc "Functions to load Trip Updates and Vehicle Positions into memory."
 
-  alias TransitData.GlidesReport.Util
   alias TransitData.GlidesReport
+  alias TransitData.GlidesReport.Util
 
   # If a breaking change is made to how files are saved or how their data is structured,
   # this value lets us make a clean break to a new directory for downloads.
@@ -60,7 +60,7 @@ defmodule TransitData.GlidesReport.Loader do
 
     if Enum.any?(Task.yield_many(deletion_tasks, timeout: 1), &is_nil/1) do
       IO.puts("Waiting for previous table(s) to finish deleting...")
-      Task.await_many(Enum.reject(deletion_tasks, &is_nil/1), :infinity)
+      _ = Task.await_many(Enum.reject(deletion_tasks, &is_nil/1), :infinity)
       IO.puts("Done.")
     end
 
@@ -416,11 +416,12 @@ defmodule TransitData.GlidesReport.Loader do
         Task.async(fn -> :ets.delete(:"#{table}_OLD") end)
       end
 
-    :ets.new(table, [
-      :named_table,
-      :public,
-      write_concurrency: :auto
-    ])
+    _ =
+      :ets.new(table, [
+        :named_table,
+        :public,
+        write_concurrency: :auto
+      ])
 
     deletion_task
   end
