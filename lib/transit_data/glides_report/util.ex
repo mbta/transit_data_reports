@@ -5,7 +5,12 @@ defmodule TransitData.GlidesReport.Util do
 
   alias TransitData.GlidesReport
 
-  # Streams all values from an ETS table. (Assuming table's objects are {key, value} 2-tuples)
+  @doc """
+  Streams all values from an ETS table.
+
+  (Assuming table's objects are {key, value} 2-tuples)
+  """
+  @spec stream_values(:ets.table()) :: Enumerable.t()
   def stream_values(table) do
     :ets.first(table)
     |> Stream.iterate(fn key -> :ets.next(table, key) end)
@@ -13,8 +18,11 @@ defmodule TransitData.GlidesReport.Util do
     |> Stream.map(fn key -> :ets.lookup_element(table, key, 2) end)
   end
 
-  # Formats an integer to a string, with left zero-padding to at least `count` digits.
-  def zero_pad(n, count \\ 2) do
+  @doc """
+  Formats an integer to a string, with left zero-padding to at least `count` digits.
+  """
+  @spec zero_pad(non_neg_integer, non_neg_integer) :: String.t()
+  def zero_pad(n, count \\ 2) when is_integer(n) and n >= 0 do
     n
     |> Integer.to_string()
     |> String.pad_leading(count, "0")
@@ -33,10 +41,12 @@ defmodule TransitData.GlidesReport.Util do
     "#{p}%"
   end
 
+  @spec unix_timestamp_to_local_hour(integer) :: 0..23
   def unix_timestamp_to_local_hour(timestamp) do
     unix_timestamp_to_local_datetime(timestamp).hour
   end
 
+  @spec unix_timestamp_to_local_hour(integer) :: 0..59
   def unix_timestamp_to_local_minute(timestamp) do
     unix_timestamp_to_local_datetime(timestamp).minute
   end
@@ -47,7 +57,10 @@ defmodule TransitData.GlidesReport.Util do
     |> DateTime.shift_zone!("America/New_York")
   end
 
-  # Returns /absolute/path/to/transit_data_reports/dataset
+  @doc """
+  Returns /absolute/path/to/transit_data_reports/dataset.
+  """
+  @spec dataset_dir() :: String.t()
   def dataset_dir do
     # I'm sure there's a more concise way to do this, but I couldn't find it. :\
     project_root =
@@ -59,12 +72,19 @@ defmodule TransitData.GlidesReport.Util do
     Path.join(project_root, "dataset")
   end
 
-  # Converts a nonempty list of KW-lists, e.g.:
-  # [
-  #   [{"headerA", "valueA1"}, {"headerB", "valueB1"}],
-  #   [{"headerA", "valueA2"}, {"headerB", "valueB2"}]
-  # ]
-  # to a CSV string.
+  @doc ~S'''
+  Converts a nonempty list of KW-lists to a CSV string.
+
+      iex> table_to_csv([
+      ...>   [{"headerA", "valueA1"}, {"headerB", "valueB1"}],
+      ...>   [{"headerA", "valueA2"}, {"headerB", "valueB2"}]
+      ...> ])
+      """
+      headerA,headerB
+      valueA1,valueB1
+      valueA2,valueB2
+      """
+  '''
   def table_to_csv(table) do
     table
     |> Stream.map(&Map.new/1)
