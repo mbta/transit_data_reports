@@ -3,8 +3,12 @@ defmodule TransitData.DataLake do
   Functions to work with our mbta-gtfs-s3* data lake buckets.
   """
 
+  #############
+  # Callbacks #
+  #############
+
   @doc """
-  Returns a stream of keys of S3 objects in the given bucket that match the given prefix.
+  Returns a stream of keys of objects in the given bucket that match the given prefix.
   """
   @callback stream_object_keys(bucket :: String.t(), prefix :: String.t()) ::
               Enumerable.t(String.t())
@@ -20,12 +24,15 @@ defmodule TransitData.DataLake do
   @callback stream_json(bucket :: String.t(), key :: String.t()) ::
               {data :: Enumerable.t(map()), timestamp :: integer, basename :: String.t()}
 
-  def stream_object_keys(bucket, prefix), do: impl().stream_object_keys(bucket, prefix)
-  def stream_json(bucket, key), do: impl().stream_json(bucket, key)
+  #################################
+  # Dispatching to implementation #
+  #################################
 
-  defp impl do
-    Application.get_env(:transit_data, :data_lake_api, TransitData.S3DataLake)
-  end
+  # The module adopting this behaviour that we use for the current environment.
+  @callback_module Application.compile_env(:transit_data, :data_lake_api, TransitData.S3DataLake)
+
+  defdelegate stream_object_keys(bucket, prefix), to: @callback_module
+  defdelegate stream_json(bucket, key), to: @callback_module
 end
 
 defmodule TransitData.S3DataLake do
