@@ -1,0 +1,157 @@
+<!-- livebook:{"file_entries":[{"file":{"file_system_id":"local","file_system_type":"local","path":"/Users/pswartz/Dropbox/0-Inbox/trip-data-analytics-2024-08-12-2024-08-16/full_data.csv"},"name":"full_data.csv","type":"file"}]} -->
+
+# Glides Full Data Analysis
+
+```elixir
+Mix.install([
+  {:explorer, "~> 0.9.1"},
+  {:kino, "~> 0.13.2"}
+])
+```
+
+## Summary
+
+(This is based on data from 2024-08-12 through 2024-08-16)
+
+Accuracy measurements are based on the [ETA Accuracy Benchmark](https://github.com/TransitApp/ETA-Accuracy-Benchmark?tab=readme-ov-file).
+
+Overall, 26.2% of scheduled trips would have had an accurate prediction based solely on the schedule. These are all treated as being in the 0 - 3 minute bucket, requiring the most accuracy.
+
+Inspector-entered data (before the trip leaves) is better. 60.2% of scheduled trips had an accurate time entered by an inspector before the trip left. This has some inaccuracies on both sides:
+
+* understated because dropped trips do not include a `final_lead_time` and we cannot be sure they were dropped before the trip would have departed, so we treat them as inaccurate
+* overstated because we put inspector-entered data into the prediction bucket appropriate for when the data was entered, not taking into account that the data would get less accurate as the actual departure approaches. If we treated all predictions as being in the 0 - 3 minute bucket, the accuracy drops to 26.3%. If we fall back to using the schedule data in cases where the inspectors do not enter data, the accuracy goes to 33.0%.
+
+33% of scheduled trips did not have a recorded departure time: it's unclear whether what this means, but it does limit our ability to measure inspector/schedule data against actual data.
+
+## Data
+
+Fetch `full_data.csv` fetched from Glides report panel and add to the workbook as a file reference.
+
+File documentation: https://www.notion.so/mbta-downtown-crossing/Trip-Data-Analytics-Export-Field-Descriptions-71f6e0fc443f4ca5aaae18183028dd0a
+
+```elixir
+require Explorer.DataFrame, as: DF
+alias Explorer.Series
+  
+df = DF.from_csv!(Kino.FS.file_path("full_data.csv"))
+
+df =  DF.sort_by(df, [asc: service_date, asc: terminal, asc: scheduled_time])
+# |> Kino.DataTable.new()
+
+Kino.nothing()
+```
+
+```elixir
+# scheduled at 9:00
+# automatic at 9:02
+# vehicle was after ETA, value should be positive: automatic - scheduled
+df = df
+  |> DF.mutate(
+    manual_bucket: Series.cut(^df[:final_lead_time], [-1, 2, 5, 9], labels: ["late", "0-3", "3-6", "6-10", "10+"])[:category]
+    #manual_bucket: "0-3"
+  )
+  |> DF.mutate(
+  schedule_inaccuracy: automatic_time - scheduled_time, 
+  manual_inaccuracy: automatic_time - manual_time,
+  allowed_early: Series.select(
+    manual_bucket == "10+",
+    -90,
+    Series.select(
+      manual_bucket == "6-10",
+      -60,
+      Series.select(
+        manual_bucket == "3-6",
+        -60,
+        -30
+      )
+    )
+  ),
+  allowed_late: Series.select(
+    manual_bucket == "10+",
+    270,
+    Series.select(
+      manual_bucket == "6-10",
+      210,
+      Series.select(
+        manual_bucket == "3-6",
+        150,
+        90
+      )
+    )
+  )
+)
+|> DF.mutate(
+  is_accurate: Series.select(dropped?, 
+    false, 
+    schedule_inaccuracy <= 90 and schedule_inaccuracy >= -30))
+|> DF.mutate(
+  manual_accurate: Series.select(
+    dropped?,
+    is_accurate,
+    Series.select(final_lead_time >= 0, 
+      manual_inaccuracy >= allowed_early and manual_inaccuracy <= allowed_late,
+      is_accurate
+    ))
+)
+df
+#|> DF.filter(final_lead_time == 3)
+|> DF.select([:service_date, :terminal, :scheduled_time, :automatic_time, :manual_time, :dropped?, :initial_lead_time, :final_lead_time, :schedule_inaccuracy, :manual_inaccuracy, :is_accurate, :manual_accurate, :manual_bucket])
+|> Kino.DataTable.new()
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+summarised = df 
+|> DF.summarise(
+  count: count(automatic_time), 
+  nil_count: nil_count(automatic_time), 
+  mean: mean(schedule_inaccuracy), 
+  std: standard_deviation(schedule_inaccuracy), 
+  p25: quantile(schedule_inaccuracy, 0.25), 
+  p50: median(schedule_inaccuracy), 
+  p75: quantile(schedule_inaccuracy, 0.75),
+  accurate_count: sum(is_accurate),
+  manual_count: sum(manual_accurate)
+)
+|> DF.mutate(
+  accurate_pct: round(cast(accurate_count, {:u, 32}) / (count + nil_count), 3)
+)
+
+# weigh each manual bucket equally
+manual_pct = df 
+  |> DF.filter(manual_bucket != "late")
+  |> DF.group_by(:manual_bucket)
+  |> DF.summarise(size: size(manual_accurate), accurate_count: sum(manual_accurate))
+  |> DF.mutate(group_pct: round(cast(accurate_count, {:u, 32}) / size, 3))
+  |> DF.ungroup()
+  |> DF.summarise(manual_pct: mean(group_pct))
+
+summarised
+|> DF.concat_columns(manual_pct)
+|> Kino.DataTable.new()
+```
+
+```elixir
+df
+|> DF.group_by(:terminal)
+|> DF.summarise(
+  count: count(automatic_time), 
+  nil_count: nil_count(automatic_time), 
+  mean: mean(schedule_inaccuracy), 
+  std: standard_deviation(schedule_inaccuracy), 
+  p25: quantile(schedule_inaccuracy, 0.25), 
+  p50: median(schedule_inaccuracy), 
+  p75: quantile(schedule_inaccuracy, 0.75),
+  accurate_count: sum(is_accurate),
+  manual_count: sum(manual_accurate)
+)
+|> DF.mutate(
+  accurate_pct: round(cast(accurate_count, {:u, 32}) / (count + nil_count), 3),
+  manual_pct: round(cast(manual_count, {:u, 32}) / (count + nil_count), 3)
+)
+|> Kino.DataTable.new()
+```
+
+<!-- livebook:{"offset":5373,"stamp":{"token":"XCP.t5odXogwlI4Fm_roCYgV75lfQ08umaK8iKnSn22jN_JbJBWKEQK4L90jIf3-81fVk2a4Q-87coDSQe2vZnF0w12M-IuJ4EdhxfIVcQ","version":2}} -->
