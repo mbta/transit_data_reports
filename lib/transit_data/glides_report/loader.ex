@@ -300,12 +300,11 @@ defmodule TransitData.GlidesReport.Loader do
   # Downloads VehiclePosition or TripUpdate files and returns the local filenames they were downloaded to.
   defp download_files(remote_prefix, table_name, s3_bucket, count, existing_filenames) do
     stream =
-      ExAws.S3.list_objects(s3_bucket, prefix: remote_prefix)
-      |> ExAws.stream!()
+      TransitData.DataLake.stream_object_keys(s3_bucket, remote_prefix)
       # Find a file matching the prefix and table name.
       |> Stream.filter(&s3_object_match?(&1, table_name, existing_filenames))
       # Download the file to memory and stream the JSON objects under its "entity" key.
-      |> Stream.map(&stream_s3_json(&1, s3_bucket))
+      |> Stream.map(&TransitData.DataLake.stream_json(s3_bucket, &1))
       # Clean up and filter data.
       |> Stream.map(fn {objects, timestamp, filename} ->
         objects = clean_up(objects, timestamp, table_name)
@@ -334,31 +333,14 @@ defmodule TransitData.GlidesReport.Loader do
     end
   end
 
-  defp s3_object_match?(obj, table_name, existing_filenames) do
-    s3_filename = Path.basename(obj.key)
+  defp s3_object_match?(obj_key, table_name, existing_filenames) do
+    s3_filename = Path.basename(obj_key)
 
     cond do
       not Regex.match?(~r"(realtime|rtr)_#{table_name}_enhanced.json.gz$", s3_filename) -> false
       s3_filename_to_local_filename(s3_filename) in existing_filenames -> false
       :else -> true
     end
-  end
-
-  defp stream_s3_json(obj, s3_bucket) do
-    stream =
-      ExAws.S3.download_file(s3_bucket, obj.key, :memory)
-      |> ExAws.stream!()
-      |> StreamGzip.gunzip()
-      |> Jaxon.Stream.from_enumerable()
-
-    timestamp =
-      stream
-      |> Jaxon.Stream.query([:root, "header", "timestamp"])
-      |> Enum.at(0)
-
-    objects = Jaxon.Stream.query(stream, [:root, "entity", :all])
-
-    {objects, timestamp, Path.basename(obj.key)}
   end
 
   # Loads a locally-stored Erlang External Term Format file into an ETS table.
