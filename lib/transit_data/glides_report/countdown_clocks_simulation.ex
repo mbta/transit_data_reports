@@ -3,10 +3,17 @@ defmodule TransitData.GlidesReport.CountdownClocksSimulation do
 
   alias TransitData.GlidesReport
 
-  @type t :: %{(stop_id :: String.t()) => GlidesReport.Sign.t()}
+  @type t :: %{stop_id => GlidesReport.Sign.t()}
 
-  # Returns a set of {stop_id, timestamp} tuples, each representing an instance where
-  # a predicted time (timestamp) appeared on the countdown clock for a stop (stop_id).
+  @type stop_id :: String.t()
+
+  @type timestamp :: integer
+
+  @doc """
+  Returns a set of {stop_id, timestamp} tuples, each representing an instance where
+  a predicted time (timestamp) appeared on the countdown clock for a stop (stop_id).
+  """
+  @spec get_all_top_two_times(Enumerable.t(stop_id)) :: MapSet.t({stop_id, timestamp})
   def get_all_top_two_times(stop_ids) do
     trip_updates_for_simulation(stop_ids)
     |> Enum.reduce(%{}, fn tr_upd, signs -> apply_trip_update(signs, tr_upd) end)
