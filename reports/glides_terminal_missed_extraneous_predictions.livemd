@@ -112,71 +112,67 @@ use_advanced_date_input =
 
 frame = Kino.Frame.new(placeholder: false)
 
+content_map = %{
+  true:
+    Kino.Layout.grid(
+      [
+        env_input,
+        Kino.Layout.grid(
+          [
+            start_date_input,
+            end_date_input,
+            sample_rate_input,
+            samples_per_minute_input
+          ],
+          columns: 2
+        )
+      ],
+      columns: 1
+    ),
+  false:
+    Kino.Layout.grid(
+      [
+        env_input,
+        date_input,
+        sample_rate_input,
+        samples_per_minute_input
+      ],
+      columns: 2
+    )
+}
+
+doc_table_map =
+  %{
+    true: """
+    | Analyze data from... | Start analyzing data from this date/time.<br/>Default is 4am yesterday, Eastern. |
+    | to...                | Analyze data up to this date/time.<br/>Default is 3:59am today, Eastern.         |
+    """,
+    false: """
+    | Date | Service date to analyze data from. A 24-hour period starting at 4am Eastern. |
+    """
+  }
+  |> Map.new(fn {k, fragment} ->
+    {k,
+     Kino.Markdown.new("""
+     ### Setting Details
+
+     | Setting                             | Details                                                                                                                                                                                              |
+     | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+     | Environment                         | Environment to analyze data from.                                                                                                                                                                    |
+     #{String.trim_trailing(fragment)}
+     | Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                    |
+     | Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.<br/>Leave blank to analyze *all* data within each sampled minute. (slowest) |
+     """)}
+  end)
+
 update_frame = fn
   nil ->
     Kino.Frame.clear(frame)
 
   use_advanced_date ->
     Kino.Frame.clear(frame)
-
-    {content, doc_table_fragment} =
-      if use_advanced_date do
-        content =
-          Kino.Layout.grid(
-            [
-              env_input,
-              Kino.Layout.grid(
-                [
-                  start_date_input,
-                  end_date_input,
-                  sample_rate_input,
-                  samples_per_minute_input
-                ],
-                columns: 2
-              )
-            ],
-            columns: 1
-          )
-
-        fragment = """
-        | Analyze data from... | Start analyzing data from this date/time.<br/>Default is 4am yesterday, Eastern. |
-        | to...                | Analyze data up to this date/time.<br/>Default is 3:59am today, Eastern.         |
-        """
-
-        {content, fragment}
-      else
-        content =
-          Kino.Layout.grid(
-            [
-              env_input,
-              date_input,
-              sample_rate_input,
-              samples_per_minute_input
-            ],
-            columns: 2
-          )
-
-        fragment = """
-        | Date | Service date to analyze data from. A 24-hour period starting at 4am Eastern. |
-        """
-
-        {content, fragment}
-      end
-
-    doc_table =
-      Kino.Markdown.new("""
-      ### Setting Details
-
-      | Setting                             | Details                                                                                                                                                                                              |
-      | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-      | Environment                         | Environment to analyze data from.                                                                                                                                                                    |
-      #{String.trim_trailing(doc_table_fragment)}
-      | Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                    |
-      | Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.<br/>Leave blank to analyze *all* data within each sampled minute. (slowest) |
-      """)
-
-    Kino.Frame.append(frame, content)
-    Kino.Frame.append(frame, doc_table)
+    Kino.Frame.append(frame, content_map[use_advanced_date])
+    Kino.Frame.append(frame, doc_table_map[use_advanced_date])
 end
 
 # Update the form content whenever the "Use advanced input?" toggle changes.
@@ -560,4 +556,4 @@ Kino.Download.new(
 Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":19314,"stamp":{"token":"XCP.njVBqFgjz-RYaRIlsttEfRskeQIc57PD-_KWwabk_P24d9l5wnaM9iy3tWRYh2poztcum6PKtwc_Qasp1tLLBcdM4-No0US-oBctUnUYjeYktxAWs1ir9lB2yn7sZuTWMvbDvDspgVSgy5HQTb0Z12HOK8NGjA","version":2}} -->
+<!-- livebook:{"offset":19072,"stamp":{"token":"XCP.aq9STmMpkaP4Y6YvvQoTHCyZGPWFv6CytxecLkjkeR1dEKo7Qw9itfMmpTOtvBWkeJsQ9w0rvDfSX5s_WgXK4EENx3_Ps0nkGBGHb2filReMKUL8L7COxK4w1A8UXTKZZW37-ILIkyplLaJesJE0lTFlM1mLRg","version":2}} -->
