@@ -5,6 +5,22 @@ defmodule TransitData.GlidesReport.TripUpdate do
 
   alias TransitData.GlidesReport
 
+  @doc """
+  Cleans up a TripUpdate parsed from raw JSON. (With keys not yet converted to
+  atoms)
+
+  Returns nil if there is no data relevant to Glides terminals in the TripUpdate.
+
+  - Canceled TripUpdates are discarded.
+  - Nonrevenue TripUpdates are discarded.
+  - `.trip_update.timestamp` is replaced with the given `header_timestamp` if
+    missing or nil
+  - `.trip_update.stop_time_update` list is filtered to non-skipped entries with
+    defined departure times, at Glides terminal stops. If the filtered list is
+    empty, the entire TripUpdate is discarded.
+  - All unused fields are removed.
+  """
+  @spec clean_up(map, integer) :: map | nil
   def clean_up(tr_upd, header_timestamp)
 
   def clean_up(%{"trip_update" => %{"trip" => %{"schedule_relationship" => "CANCELED"}}}, _) do
@@ -46,14 +62,16 @@ defmodule TransitData.GlidesReport.TripUpdate do
   end
 
   defp clean_up_stop_times(stop_times) do
+    glides_terminals = GlidesReport.Terminals.all_first_stops()
+
     stop_times
-    # Ignore stop times that aren't relevant to Glides terminals.
-    |> Stream.reject(&(&1["stop_id"] not in GlidesReport.Terminals.all_stops()))
-    # Select stop times that have departure times and aren't skipped.
     |> Stream.filter(fn stop_time ->
-      has_departure_time = not is_nil(stop_time["departure"]["time"])
-      is_skipped = stop_time["schedule_relationship"] == "SKIPPED"
-      has_departure_time and not is_skipped
+      cond do
+        is_nil(stop_time["departure"]["time"]) -> false
+        stop_time["schedule_relationship"] == "SKIPPED" -> false
+        stop_time["stop_id"] not in glides_terminals -> false
+        :else -> true
+      end
     end)
     # Prune all but the relevant fields.
     |> Enum.map(fn
@@ -81,8 +99,18 @@ defmodule TransitData.GlidesReport.TripUpdate do
   def filter_by_advance_notice(tr_upd, min_advance_notice_sec) do
     time_of_creation = tr_upd.trip_update.timestamp
 
-    update_in(tr_upd.trip_update.stop_time_update, fn stop_times ->
-      Enum.filter(stop_times, &(&1.departure.time - time_of_creation >= min_advance_notice_sec))
-    end)
+    filtered_stop_times =
+      Enum.filter(
+        tr_upd.trip_update.stop_time_update,
+        &(&1.departure.time - time_of_creation >= min_advance_notice_sec)
+      )
+
+    case filtered_stop_times do
+      [] ->
+        nil
+
+      filtered_stop_times ->
+        put_in(tr_upd.trip_update.stop_time_update, filtered_stop_times)
+    end
   end
 end

@@ -45,6 +45,7 @@ defmodule TransitData.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:lcov_ex, "~> 0.3", only: [:dev, :test], runtime: false},
       {:mox, "~> 1.0", only: :test},
+      {:stream_data, "~> 1.0", only: :test},
       # Provided by Mix.install invocation in the notebook.
       # We only need to directly get this dep when running tests.
       {:tz, "~> 0.26.5", only: [:test]}
