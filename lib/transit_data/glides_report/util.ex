@@ -29,6 +29,61 @@ defmodule TransitData.GlidesReport.Util do
   end
 
   @doc """
+  Combines any consecutive, overlapping ranges in an enumerable.
+
+  All ranges in the enumerable must have a step of 1.
+  The returned list will be sorted.
+
+      iex> ranges = [1..2, 3..8, 7..12, 7..10, 15..20]
+      iex> merge_ranges(ranges)
+      [1..2, 3..12, 15..20]
+      iex> merge_ranges(Enum.reverse(ranges)) == merge_ranges(ranges)
+      true
+      iex> merge_ranges(Enum.shuffle(ranges)) == merge_ranges(ranges)
+      true
+
+      iex> merge_ranges([1..2//1, 2..0//-1])
+      ** (ArgumentError) received range(s) with step != 1: [2..0//-1]
+
+      iex> merge_ranges([1..5//2, 3..12//3])
+      ** (ArgumentError) received range(s) with step != 1: [1..5//2, 3..12//3]
+
+      iex> merge_ranges([])
+      []
+  """
+  @spec merge_ranges(Enumerable.t(Range.t())) :: list(Range.t())
+  def merge_ranges(ranges) do
+    bad_ranges = Enum.reject(ranges, &match?(_.._//1, &1))
+
+    unless bad_ranges == [],
+      do: raise(ArgumentError, "received range(s) with step != 1: #{inspect(bad_ranges)}")
+
+    ranges
+    |> Enum.sort_by(fn l.._r//1 -> l end)
+    |> Enum.reject(&(Range.size(&1) == 0))
+    |> Enum.chunk_while(
+      nil,
+      fn
+        range, nil ->
+          {:cont, range}
+
+        range, acc_range ->
+          if Range.disjoint?(range, acc_range),
+            do: {:cont, acc_range, range},
+            else: {:cont, merge_range_pair(acc_range, range)}
+      end,
+      fn
+        nil -> {:cont, nil}
+        final_acc -> {:cont, final_acc, nil}
+      end
+    )
+  end
+
+  defp merge_range_pair(l1..r1//1, l2..r2//1) do
+    min(l1, l2)..max(r1, r2)//1
+  end
+
+  @doc """
   Formats the ratio of two numbers as a percentage.
   """
   @spec format_percent(number, number, String.t()) :: String.t()

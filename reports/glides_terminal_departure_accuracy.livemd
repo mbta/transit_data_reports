@@ -380,28 +380,6 @@ variances = [1, 2, 3, 5, 10]
 # OVERALL VALUES #
 ##################
 
-merge_sorted_ranges = fn l1.._r1//1, _l2..r2//1 ->
-  l1..r2//1
-end
-
-# Combines any consecutive, overlapping ranges in a pre-sorted list.
-merge_ranges = fn ranges ->
-  Enum.chunk_while(
-    ranges,
-    nil,
-    fn
-      range, nil ->
-        {:cont, range}
-
-      range, acc_range ->
-        if Range.disjoint?(range, acc_range),
-          do: {:cont, acc_range, range},
-          else: {:cont, merge_sorted_ranges.(acc_range, range)}
-    end,
-    fn final_acc -> {:cont, final_acc, nil} end
-  )
-end
-
 # %{
 #   variance => %{
 #     stop_id => [actual_departure_range1, actual_departure_range2, ...]
@@ -418,9 +396,8 @@ actual_departure_windows_by_variance =
       |> Map.new(fn {stop_id, timestamps} ->
         time_ranges =
           timestamps
-          |> Enum.sort()
           |> Enum.map(fn t -> (t - variance_sec)..(t + variance_sec)//1 end)
-          |> merge_ranges.()
+          |> GlidesReport.Util.merge_ranges()
 
         {stop_id, time_ranges}
       end)
@@ -612,4 +589,4 @@ VegaLite.new(width: 500, height: 300, title: "Percent accurate by bucket size")
 |> VegaLite.encode_field(:y, "Accuracy (% of total predictions)", type: :quantitative)
 ```
 
-<!-- livebook:{"offset":21004,"stamp":{"token":"XCP.ATSOu_rP6RFgFvvRZ8paHaYkONVoffsyAdmyIND0CfyQSMJxlziipu5OMXp5vqkt5OHUi9quQtj_LASJHZq97-MmF2piU3uDc7VWoRBxn841hEBczhokS0oqxciRmKgWE8Do_GFXpC5Ob4dg5D_3FCiqht-iwg","version":2}} -->
+<!-- livebook:{"offset":20496,"stamp":{"token":"XCP.-EXEMhs5k9Gi_mbKx8oXARcJZasMGsfSE8Rd-SjV-BpOlr5qKkoFFkLN7WMMR-aoIzpoqCPXgNUJnhb6tAKAHt0wSrpFxRQX2xuKH6KqDJu7CSFDic0DnbFpNjkOxgAPuUvD1GzcFo7YCOLg2nJAiOgHI5-ewA","version":2}} -->
