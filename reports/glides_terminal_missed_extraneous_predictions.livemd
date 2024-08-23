@@ -502,6 +502,7 @@ times_table =
 
 trips_table =
   0..23
+  # Service day starts at 4am, so let's start the table at that hour.
   |> Enum.map(&rem(&1 + 4, 24))
   |> Enum.map(fn hour ->
     predicted_trip_count =
@@ -559,4 +560,4 @@ Kino.Download.new(
 Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":19244,"stamp":{"token":"XCP.YPz_ovuJ6IQLJGyw9Xt5LSb29Ad82LAaNC5aD_K8112H_yOJrTy0VTfLp86pNYp2_i4aSJSJCOEEVlYSY3vBEFiAOR3xq8jp9urFy2ZqSdiqo6e2cqJJy5-R1emam7-wythlf1hfwXv-tMecJAfFlNv4UjdZ2Q","version":2}} -->
+<!-- livebook:{"offset":19314,"stamp":{"token":"XCP.njVBqFgjz-RYaRIlsttEfRskeQIc57PD-_KWwabk_P24d9l5wnaM9iy3tWRYh2poztcum6PKtwc_Qasp1tLLBcdM4-No0US-oBctUnUYjeYktxAWs1ir9lB2yn7sZuTWMvbDvDspgVSgy5HQTb0Z12HOK8NGjA","version":2}} -->
