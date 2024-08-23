@@ -380,28 +380,6 @@ variances = [1, 2, 3, 5, 10]
 # OVERALL VALUES #
 ##################
 
-# This is just trip_updates now
-# predicted_departure_times =
-#   trip_updates
-#   |> Stream.flat_map(fn tr_upd ->
-#     Enum.map(
-#       tr_upd.trip_update.stop_time_update,
-#       &{&1.stop_id, &1.departure.time}
-#     )
-#   end)
-#   |> then(fn stream ->
-#     if not is_nil(top_twos) do
-#       Stream.filter(stream, &(&1 in top_twos))
-#     else
-#       stream
-#     end
-#   end)
-#   |> MapSet.new()
-
-# This is just vehicle_positions now
-# actual_departure_times =
-#   MapSet.new(vehicle_positions, &{&1.vehicle.stop_id, &1.vehicle.timestamp})
-
 merge_sorted_ranges = fn l1.._r1//1, _l2..r2//1 ->
   l1..r2//1
 end
@@ -474,8 +452,6 @@ accurate_predictions_by_variance =
 # VALUES BUCKETED BY HOUR #
 ###########################
 
-# predicted_departure_times_by_hour = GlidesReport.Util.group_by_hour(predicted_departure_times)
-# actual_departure_times_by_hour = GlidesReport.Util.group_by_hour(actual_departure_times)
 predictions_by_hour =
   trip_updates
   |> Enum.group_by(&(&1.hour))
@@ -500,6 +476,7 @@ accurate_predictions_by_variance_by_hour =
     Enum.map(departures, &{variance, &1})
   end)
   # Then, group by hour.
+  # %{hour => [{variance, Departure.t()}]}
   |> Enum.group_by(
     fn {_variance, departure} -> GlidesReport.Util.unix_timestamp_to_local_hour(departure.timestamp) end
   )
@@ -635,4 +612,4 @@ VegaLite.new(width: 500, height: 300, title: "Percent accurate by bucket size")
 |> VegaLite.encode_field(:y, "Accuracy (% of total predictions)", type: :quantitative)
 ```
 
-<!-- livebook:{"offset":21700,"stamp":{"token":"XCP.oK-p-YHE3YsO0s9LHZdFdErkXTgBhp6aL46BIQCpxqLUtoGSaQ3NWPgNfLrVNkW2BqELQjVVaHztOKeY308yLZB0Vzt07Yum3-aA5TwUWZ5CFGCLOeEyrKLcKMuQUYbp2MS5ZHqdMrxwUIA55yQgzfpt7vgn7w","version":2}} -->
+<!-- livebook:{"offset":21004,"stamp":{"token":"XCP.ATSOu_rP6RFgFvvRZ8paHaYkONVoffsyAdmyIND0CfyQSMJxlziipu5OMXp5vqkt5OHUi9quQtj_LASJHZq97-MmF2piU3uDc7VWoRBxn841hEBczhokS0oqxciRmKgWE8Do_GFXpC5Ob4dg5D_3FCiqht-iwg","version":2}} -->
