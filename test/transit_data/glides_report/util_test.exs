@@ -24,7 +24,7 @@ defmodule TransitData.GlidesReport.UtilTest do
     end
 
     test "doesn't add padding when n is already long enough" do
-      assert "12345" == Util.zero_pad(12345, 3)
+      assert "12345" == Util.zero_pad(12_345, 3)
       assert "15" == Util.zero_pad(15, 2)
     end
 
@@ -72,12 +72,13 @@ defmodule TransitData.GlidesReport.UtilTest do
   describe "build_csv_name/3" do
     test "creates a descriptive filename for the table download" do
       alias TransitData.GlidesReport.Settings.{Filter, Load}
+      alias TransitData.GlidesReport.Terminals
 
       table_name = "The Results"
       loader_settings = Load.new("", ~D[2024-08-05], 1, nil)
 
       filter_settings =
-        Filter.new(TransitData.GlidesReport.Terminals.by_tags([:glides, :green]), true, nil)
+        Filter.new(Terminals.by_tags([:glides, :green]), true, nil)
 
       expected =
         "Glides report - The Results - " <>

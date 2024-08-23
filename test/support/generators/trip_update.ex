@@ -5,6 +5,7 @@ defmodule TransitData.GlidesReport.Generators.TripUpdate do
 
   import StreamData
   import ExUnitProperties, only: [gen: 2]
+  alias TransitData.GlidesReport.Terminals
 
   # (Ignore first item, it keeps the formatter from moving the first comment)
   @type trip_update_gen_opt ::
@@ -35,19 +36,12 @@ defmodule TransitData.GlidesReport.Generators.TripUpdate do
         canceled? -> constant(canceled?)
       end
 
-    make_revenue_gen = fn canceled? ->
-      case opts[:revenue?] do
-        nil -> map(boolean(), &if(canceled?, do: &1, else: true))
-        revenue? -> constant(revenue?)
-      end
-    end
-
     gen all(
           trip_id <- map(positive_integer(), &Integer.to_string/1),
           canceled? <- canceled_gen,
           # Revenue can be false only if canceled is true.
           # (There are some exceptions to this, but let's not complicate things even more.)
-          revenue? <- make_revenue_gen.(canceled?),
+          revenue? <- revenue_generator(canceled?, opts[:revenue?]),
           timestamp <- timestamp_generator_(canceled?, revenue?, opts[:define_timestamp]),
           stop_time_update <-
             stop_time_update_generator_(
@@ -271,7 +265,7 @@ defmodule TransitData.GlidesReport.Generators.TripUpdate do
   end
 
   defp terminal_stop_id_generator do
-    member_of(TransitData.GlidesReport.Terminals.all_first_stops())
+    member_of(Terminals.all_first_stops())
   end
 
   # Never produces Glides terminal stop IDs.
@@ -279,7 +273,7 @@ defmodule TransitData.GlidesReport.Generators.TripUpdate do
     gen all(
           i <- integer(70_000..79_999//1),
           id = Integer.to_string(i),
-          id not in TransitData.GlidesReport.Terminals.all_first_stops()
+          id not in Terminals.all_first_stops()
         ) do
       id
     end
@@ -307,6 +301,16 @@ defmodule TransitData.GlidesReport.Generators.TripUpdate do
 
       if canceled?, do: Map.put(trip, "schedule_relationship", "CANCELED"), else: trip
     end
+  end
+
+  defp revenue_generator(canceled?, force_value)
+
+  defp revenue_generator(canceled?, nil) do
+    map(boolean(), &if(canceled?, do: &1, else: true))
+  end
+
+  defp revenue_generator(_, force_value) do
+    constant(force_value)
   end
 
   defp time_generator do

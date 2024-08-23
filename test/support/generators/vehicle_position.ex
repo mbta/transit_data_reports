@@ -5,6 +5,7 @@ defmodule TransitData.GlidesReport.Generators.VehiclePosition do
 
   import StreamData
   import ExUnitProperties, only: [gen: 2]
+  alias TransitData.GlidesReport.Terminals
 
   def valid_vehicle_position_generator(opts \\ []) do
     current_status_members =
@@ -186,14 +187,14 @@ defmodule TransitData.GlidesReport.Generators.VehiclePosition do
   end
 
   defp second_stop_id_generator do
-    member_of(TransitData.GlidesReport.Terminals.all_next_stops())
+    member_of(Terminals.all_next_stops())
   end
 
   defp non_second_stop_id_generator do
     gen all(
           i <- integer(70_000..79_999//1),
           id = Integer.to_string(i),
-          id not in TransitData.GlidesReport.Terminals.all_next_stops()
+          id not in Terminals.all_next_stops()
         ) do
       id
     end
