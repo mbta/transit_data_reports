@@ -32,7 +32,11 @@ defmodule TransitData.GlidesReport.Util do
   Formats the ratio of two numbers as a percentage.
   """
   @spec format_percent(number, number, String.t()) :: String.t()
-  def format_percent(_numerator, denominator, zero_fallback) when denominator == 0 do
+  def format_percent(_numerator, denominator, zero_fallback)
+      # Using a guard with `==` instead of directly pattern matching on 0
+      # (which implicitly uses `===`) so that both int 0 and float 0.0
+      # fall within this clause.
+      when denominator == 0 do
     zero_fallback
   end
 
