@@ -7,6 +7,24 @@ defmodule TransitData.GlidesReport.Generators.VehiclePosition do
   import ExUnitProperties, only: [gen: 2]
   alias TransitData.GlidesReport.Terminals
 
+  # (Ignore first item, it keeps the formatter from moving the first comment)
+  @type vehicle_position_gen_opt ::
+          :___
+          # Override the list of possible current_status values.
+          | {:current_status, [String.t()]}
+          # Force all vehicle positions to have either Glides-terminal-relevant stop IDs, or not.
+          | {:stop_ids, :relevant | :irrelevant}
+          # Force all vehicle positions to have stop ID defined at .vehicle.stop_id, or not.
+          | {:define_stop_id, boolean}
+          # Force all vehicle positions to be revenue, or not.
+          | {:revenue, boolean}
+
+  @doc """
+  Returns a StreamData generator that yields valid vehicle positions.
+
+  Use opts to narrow the output.
+  """
+  @spec valid_vehicle_position_generator([vehicle_position_gen_opt]) :: StreamData.t(map())
   def valid_vehicle_position_generator(opts \\ []) do
     current_status_members =
       opts[:current_status] || ["INCOMING_AT", "IN_TRANSIT_TO", "STOPPED_AT"]
