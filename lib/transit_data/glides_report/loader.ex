@@ -316,7 +316,7 @@ defmodule TransitData.GlidesReport.Loader do
       |> Stream.map(fn {objects, timestamp, filename} ->
         objects =
           Stream.map(objects, fn obj ->
-            AtomicMap.convert(obj, underscore: false)
+            AtomicMap.convert(obj, safe: false, underscore: false)
           end)
 
         local_filename = s3_filename_to_local_filename(filename)
