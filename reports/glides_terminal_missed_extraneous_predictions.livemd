@@ -58,6 +58,17 @@ Cells that generate inputs / outputs are marked with a "👉"—you can skip to 
 
 ## Setup
 
+```elixir
+use_advanced_date? = Kino.Shorts.read_checkbox("Use advanced date/time input?")
+Kino.nothing()
+```
+
+**Simple:** Choose a date. The report will analyze the full service day on that date.
+
+**Advanced:** Choose a start date+time and end date+time. The report will analyze within that window only.
+
+<!-- livebook:{"break_markdown":true} -->
+
 ### 👉 What data do you want to load?
 
 ```elixir
@@ -70,23 +81,43 @@ env_input =
     {"-sandbox", "sandbox"}
   ])
 
-today_date =
-  DateTime.utc_now()
-  |> DateTime.shift_zone!("America/New_York")
-  |> DateTime.to_date()
+# DateTimes are cached in the process dictionary to prevent the input's default
+# value from changing (and the input from resetting to that default) every time this cell re-runs.
+process_get = fn key, default_fn ->
+  case Process.get(key, nil) do
+    nil ->
+      value = default_fn.()
+      Process.put(key, {:value, value})
+      value
+    {:value, value} ->
+      value
+  end
+end
 
-yesterday_date = Date.add(today_date, -1)
+
+today_date =
+  process_get.(:today_date, fn ->
+      DateTime.utc_now()
+      |> DateTime.shift_zone!("America/New_York")
+      |> DateTime.to_date()
+    end)
+
+yesterday_date = process_get.(:yesterday_date, fn -> Date.add(today_date, -1) end)
 
 # Default setting: Analyze a full service day, starting at 4am yesterday (Eastern) and ending at 4am today (Eastern).
 yesterday_start_time =
-  DateTime.new!(yesterday_date, ~T[04:00:00], "America/New_York")
-  |> DateTime.shift_zone!("Etc/UTC")
-  |> DateTime.to_naive()
+  process_get.(:yesterday_start_time, fn ->
+      DateTime.new!(yesterday_date, ~T[04:00:00], "America/New_York")
+      |> DateTime.shift_zone!("Etc/UTC")
+      |> DateTime.to_naive()
+  end)
 
 today_end_time =
-  DateTime.new!(today_date, ~T[03:59:59], "America/New_York")
-  |> DateTime.shift_zone!("Etc/UTC")
-  |> DateTime.to_naive()
+  process_get.(:today_end_time, fn ->
+    DateTime.new!(today_date, ~T[03:59:59], "America/New_York")
+      |> DateTime.shift_zone!("Etc/UTC")
+      |> DateTime.to_naive()
+  end)
 
 # Simple date input
 date_input = Kino.Input.date("Date", default: yesterday_date, max: today_date)
@@ -107,82 +138,64 @@ sample_rate_input =
 samples_per_minute_input =
   Kino.Input.number("Take (?) samples per minute - leave blank for ALL", default: 1)
 
-use_advanced_date_input =
-  Kino.Input.select("Use advanced date/time input?", nil: "", false: "No", true: "Yes")
+content_map = %{
+  true:
+    Kino.Layout.grid(
+      [
+        env_input,
+        Kino.Layout.grid(
+          [
+            start_date_input,
+            end_date_input,
+            sample_rate_input,
+            samples_per_minute_input
+          ],
+          columns: 2
+        )
+      ],
+      columns: 1
+    ),
+  false:
+    Kino.Layout.grid(
+      [
+        env_input,
+        date_input,
+        sample_rate_input,
+        samples_per_minute_input
+      ],
+      columns: 2
+    )
+}
+
+doc_table_map =
+  %{
+    true: """
+    | Analyze data from... | Start analyzing data from this date/time.<br/>Default is 4am yesterday, Eastern. |
+    | to...                | Analyze data up to this date/time.<br/>Default is 3:59am today, Eastern.         |
+    """,
+    false: """
+    | Date | Service date to analyze data from. A 24-hour period starting at 4am Eastern. |
+    """
+  }
+  |> Map.new(fn {k, fragment} ->
+    {k,
+     Kino.Markdown.new("""
+     ### Setting Details
+
+     | Setting                             | Details                                                                                                                                                                                              |
+     | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+     | Environment                         | Environment to analyze data from.                                                                                                                                                                    |
+     #{String.trim_trailing(fragment)}
+     | Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                    |
+     | Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.<br/>Leave blank to analyze *all* data within each sampled minute. (slowest) |
+     """)}
+  end)
 
 frame = Kino.Frame.new(placeholder: false)
+Kino.Frame.clear(frame)
+Kino.Frame.append(frame, content_map[use_advanced_date?])
+Kino.Frame.append(frame, doc_table_map[use_advanced_date?])
 
-update_frame = fn
-  nil ->
-    Kino.Frame.clear(frame)
-
-  use_advanced_date ->
-    Kino.Frame.clear(frame)
-
-    {content, doc_table_fragment} =
-      if use_advanced_date do
-        content =
-          Kino.Layout.grid(
-            [
-              env_input,
-              Kino.Layout.grid(
-                [
-                  start_date_input,
-                  end_date_input,
-                  sample_rate_input,
-                  samples_per_minute_input
-                ],
-                columns: 2
-              )
-            ],
-            columns: 1
-          )
-
-        fragment = """
-        | Analyze data from... | Start analyzing data from this date/time.<br/>Default is 4am yesterday, Eastern. |
-        | to...                | Analyze data up to this date/time.<br/>Default is 3:59am today, Eastern.         |
-        """
-
-        {content, fragment}
-      else
-        content =
-          Kino.Layout.grid(
-            [
-              env_input,
-              date_input,
-              sample_rate_input,
-              samples_per_minute_input
-            ],
-            columns: 2
-          )
-
-        fragment = """
-        | Date | Service date to analyze data from. A 24-hour period starting at 4am Eastern. |
-        """
-
-        {content, fragment}
-      end
-
-    doc_table =
-      Kino.Markdown.new("""
-      ### Setting Details
-
-      | Setting                             | Details                                                                                                                                                                                              |
-      | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-      | Environment                         | Environment to analyze data from.                                                                                                                                                                    |
-      #{String.trim_trailing(doc_table_fragment)}
-      | Sample data at (?)-minute intervals | Sets interval at which data is sampled for analysis.<br/>Lower value = more samples and slower report generation.                                                                                    |
-      | Take (?) samples per minute         | Sets number of samples to take within each sampled minute.<br/>Higher value = more samples and slower report generation.<br/>Leave blank to analyze *all* data within each sampled minute. (slowest) |
-      """)
-
-    Kino.Frame.append(frame, content)
-    Kino.Frame.append(frame, doc_table)
-end
-
-# Update the form content whenever the "Use advanced input?" toggle changes.
-Kino.listen(use_advanced_date_input, fn %{value: value} -> update_frame.(value) end)
-
-Kino.render(use_advanced_date_input)
 frame
 ```
 
@@ -190,17 +203,13 @@ Read inputs.
 
 ```elixir
 # Some manual validation:
-if is_nil(Kino.Input.read(use_advanced_date_input)) do
-  Kino.interrupt!(:error, ~s|Please choose an option in the "Use advanced date/time input?" dropdown.|)
-end
-
 sample_count = Kino.Input.read(samples_per_minute_input)
 
-if is_integer(sample_count) and sample_count <= 0 do
+if is_number(sample_count) and trunc(sample_count) <= 0 do
   Kino.interrupt!(:error, "Samples per minute must be either blank or a positive integer.")
 end
 
-if Kino.Input.read(use_advanced_date_input) do
+if use_advanced_date? do
   start_dt = Kino.Input.read(start_date_input)
   end_dt = Kino.Input.read(end_date_input)
 
@@ -233,11 +242,11 @@ end
 
 # Inputs are valid. Drop them into a settings struct.
 loader_settings =
-  if Kino.Input.read(use_advanced_date_input) do
+  if use_advanced_date? do
     GlidesReport.Settings.Load.new(
       Kino.Input.read(env_input),
       Kino.Input.read(start_date_input) |> DateTime.from_naive!("Etc/UTC"),
-      Kino.Input.read(end_date_input)  |> DateTime.from_naive!("Etc/UTC"),
+      Kino.Input.read(end_date_input) |> DateTime.from_naive!("Etc/UTC"),
       Kino.Input.read(sample_rate_input),
       Kino.Input.read(samples_per_minute_input)
     )
@@ -318,6 +327,15 @@ filter_settings =
 Filter trip updates based on your settings.
 
 ```elixir
+alias TransitData.GlidesReport.Departure
+
+top_twos =
+  if filter_settings.limit_to_next_2_predictions do
+    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.stop_ids)
+  else
+    nil
+  end
+
 trip_updates =
   :TripUpdates
   |> GlidesReport.Util.stream_values()
@@ -330,13 +348,24 @@ trip_updates =
     &GlidesReport.TripUpdate.filter_by_advance_notice(&1, filter_settings.min_advance_notice_sec)
   )
   |> Stream.reject(&is_nil/1)
-
-top_twos =
-  if filter_settings.limit_to_next_2_predictions do
-    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.stop_ids)
-  else
-    nil
-  end
+  # Split each trip update into its individual stop_time_update items.
+  # Note that we use the timestamp of the predicted departure,
+  # not the timestamp of when the prediction was generated.
+  |> Stream.flat_map(fn tr_upd ->
+    Enum.map(
+      tr_upd.trip_update.stop_time_update,
+      &Departure.new(tr_upd.trip_update.trip.trip_id, &1.stop_id, &1.departure.time)
+    )
+  end)
+  # Apply the "appeared on countdown clocks" filter, if it's enabled.
+  |> then(fn stream ->
+    if not is_nil(top_twos) do
+      Stream.filter(stream, &({&1.stop, &1.timestamp} in top_twos))
+    else
+      stream
+    end
+  end)
+  |> Enum.to_list()
 
 Kino.nothing()
 ```
@@ -350,6 +379,8 @@ vehicle_positions =
   |> Stream.map(&GlidesReport.VehiclePosition.normalize_stop_id/1)
   |> Stream.filter(&(&1.vehicle.stop_id in filter_settings.stop_ids))
   |> GlidesReport.VehiclePosition.dedup_statuses()
+  |> Stream.map(&Departure.new(&1.vehicle.trip.trip_id, &1.vehicle.stop_id, &1.vehicle.timestamp))
+  |> Enum.to_list()
 
 Kino.nothing()
 ```
@@ -357,54 +388,78 @@ Kino.nothing()
 Compute sets of predicted departure times and sets of actual departure times,
 
 ```elixir
-predicted_departure_times_by_hour =
-  trip_updates
-  # Group by hour of the predicted departure (not hour the prediction was generated!),
-  # in local time.
-  # This requires splitting each trip update into its individual stop_time_update items.
-  |> Stream.flat_map(fn tr_upd ->
-    Enum.map(
-      tr_upd.trip_update.stop_time_update,
-      &{&1.stop_id, &1.departure.time}
-    )
+predictions_by_hour = Enum.group_by(trip_updates, &(&1.hour))
+departures_by_hour = Enum.group_by(vehicle_positions, &(&1.hour))
+
+#################################################
+# Departure/prediction metrics by stop and time #
+# (Gives the rider's perspective)               #
+#################################################
+predicted_times_by_hour =
+  Map.new(predictions_by_hour, fn {hour, departures} ->
+    {hour, MapSet.new(departures, &{&1.stop, &1.minute})}
   end)
-  |> then(fn stream ->
-    if not is_nil(top_twos) do
-      Stream.filter(stream, &(&1 in top_twos))
-    else
-      stream
-    end
+
+actual_times_by_hour =
+  Map.new(departures_by_hour, fn {hour, departures} ->
+    {hour, MapSet.new(departures, &{&1.stop, &1.minute})}
   end)
-  |> GlidesReport.Util.group_by_hour()
 
-actual_departure_times_by_hour =
-  vehicle_positions
-  |> Stream.map(&{&1.vehicle.stop_id, &1.vehicle.timestamp})
-  |> GlidesReport.Util.group_by_hour()
+predicted_time_percentages_by_hour =
+  Map.new(0..23, fn hour ->
+    predicted_times = Map.get(predicted_times_by_hour, hour, MapSet.new())
+    actual_times = Map.get(actual_times_by_hour, hour, MapSet.new())
 
-predicted_percentages_by_hour =
-  0..23
-  |> Map.new(fn hour ->
-    predicted_departure_times = Map.get(predicted_departure_times_by_hour, hour, MapSet.new())
-
-    actual_departure_times = Map.get(actual_departure_times_by_hour, hour, MapSet.new())
-
-    actual_departure_time_count = MapSet.size(actual_departure_times)
+    actual_time_count = MapSet.size(actual_times)
 
     # Number of departure times that were both predicted and actually happened.
-    actual_AND_predicted_departure_time_count =
-      MapSet.intersection(predicted_departure_times, actual_departure_times)
+    actual_AND_predicted_time_count =
+      MapSet.intersection(predicted_times, actual_times)
       |> MapSet.size()
 
     percentage =
-      if actual_departure_time_count > 0 do
-        p =
-          round(100.0 * (actual_AND_predicted_departure_time_count / actual_departure_time_count))
-
-        "#{p}%"
-      else
+      GlidesReport.Util.format_percent(
+        actual_AND_predicted_time_count,
+        actual_time_count,
         "N/A (0 actual departures)"
-      end
+      )
+
+    {hour, percentage}
+  end)
+
+#################################################
+# Departure/prediction metrics by stop and trip #
+# (A more internal performance metric)          #
+#################################################
+predicted_trips_by_hour =
+  Map.new(predictions_by_hour, fn {hour, departures} ->
+    {hour, MapSet.new(departures, &{&1.stop, &1.trip})}
+  end)
+
+actual_trips_by_hour =
+  Map.new(departures_by_hour, fn {hour, departures} ->
+    {hour, MapSet.new(departures, &{&1.stop, &1.trip})}
+  end)
+
+predicted_trip_percentages_by_hour =
+  Map.new(0..23, fn hour ->
+    predicted_trips = Map.get(predicted_trips_by_hour, hour, MapSet.new())
+    actual_trips = Map.get(actual_trips_by_hour, hour, MapSet.new())
+
+    actual_trip_count = MapSet.size(actual_trips)
+
+    # Number of departures (represented as stop X trip)
+    # that were both predicted and actually happened.
+    actual_AND_predicted_trip_count =
+      MapSet.intersection(predicted_trips, actual_trips)
+      |> MapSet.size()
+
+    percentage =
+      GlidesReport.Util.format_percent(
+        actual_AND_predicted_trip_count,
+        actual_trip_count,
+        "N/A (0 actual departures)"
+      )
 
     {hour, percentage}
   end)
@@ -421,6 +476,7 @@ Methodology:
 * From VehiclePositions, get all timestamps (truncated to minute) at which a vehicle actually departed a stop.[^1]
 * From TripUpdates, get all timestamps (truncated to minute) at which a vehicle was predicted to depart a stop.[^2]
 * If a vehicle actually departed stop S at the same minute that a vehicle was predicted to depart stop S, then that prediction is considered accurate.
+* Also compute the above, but with predictions and departures compared by trip ID instead of timestamp.
 
 ---
 
@@ -428,32 +484,55 @@ Methodology:
 [^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
 
 ```elixir
-table =
+times_table =
   0..23
   # Service day starts at 4am, so let's start the table at that hour.
   |> Enum.map(&rem(&1 + 4, 24))
   |> Enum.map(fn hour ->
-    predicted_departure_time_count =
-      predicted_departure_times_by_hour
+    predicted_time_count =
+      predicted_times_by_hour
       |> Map.get(hour, MapSet.new())
       |> MapSet.size()
 
-    actual_departure_time_count =
-      actual_departure_times_by_hour
+    actual_time_count =
+      actual_times_by_hour
       |> Map.get(hour, MapSet.new())
       |> MapSet.size()
 
-    percentage = Map.fetch!(predicted_percentages_by_hour, hour)
+    time_percentage = Map.fetch!(predicted_time_percentages_by_hour, hour)
 
     [
       {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
-      {"# of predicted departure times", predicted_departure_time_count},
-      {"# of actual departure times", actual_departure_time_count},
-      {"% of actual departure times that were also predicted", percentage}
+      {"# of predicted departure times", predicted_time_count},
+      {"# of actual departure times", actual_time_count},
+      {"% of actual departure times that were also predicted", time_percentage}
     ]
   end)
 
-table_name = "Predicted vs actual departures"
+trips_table =
+  0..23
+  # Service day starts at 4am, so let's start the table at that hour.
+  |> Enum.map(&rem(&1 + 4, 24))
+  |> Enum.map(fn hour ->
+    predicted_trip_count =
+      predicted_trips_by_hour
+      |> Map.get(hour, MapSet.new())
+      |> MapSet.size()
+
+    actual_trip_count =
+      actual_trips_by_hour
+      |> Map.get(hour, MapSet.new())
+      |> MapSet.size()
+
+    trip_percentage = Map.fetch!(predicted_trip_percentages_by_hour, hour)
+
+    [
+      {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
+      {"# of predicted departures collapsed by trip", predicted_trip_count},
+      {"# of actual departures collapsed by trip", actual_trip_count},
+      {"% of predicted departures collapsed by trip", trip_percentage}
+    ]
+  end)
 
 Kino.Markdown.new("""
 ### 📣 Please note:
@@ -466,14 +545,28 @@ Percentage will increase with more samples taken.
 """)
 |> Kino.render()
 
+times_table_name = "Predicted vs actual departures"
+
 Kino.Download.new(
-  fn -> GlidesReport.Util.table_to_csv(table) end,
-  filename: GlidesReport.Util.build_csv_name(table_name, loader_settings, filter_settings),
+  fn -> GlidesReport.Util.table_to_csv(times_table) end,
+  filename: GlidesReport.Util.build_csv_name(times_table_name, loader_settings, filter_settings),
   label: "Export as CSV"
 )
 |> Kino.render()
 
-Kino.DataTable.new(table, name: table_name)
+Kino.DataTable.new(times_table, name: times_table_name)
+|> Kino.render()
+
+trips_table_name = "Predicted vs actual trips"
+
+Kino.Download.new(
+  fn -> GlidesReport.Util.table_to_csv(trips_table) end,
+  filename: GlidesReport.Util.build_csv_name(trips_table_name, loader_settings, filter_settings),
+  label: "Export as CSV"
+)
+|> Kino.render()
+
+Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":16421,"stamp":{"token":"XCP.RfcqZU8gKfuLX_eScRmEIoAb_09nBNeE4jJtKrdGZcOJLAU0maAXFAlC7FTKMaBJog36xKL3KRzqGCkiCO15iV11EuEPhDipSsq0vTRZ_vQcC-pl7vynhQn-AJL_WHXzQw1rUGQqCvnWvPL81VXPq20HxXPtuw","version":2}} -->
+<!-- livebook:{"offset":19407,"stamp":{"token":"XCP.0bc84sDOs5zFXN5CwioIeyNlJgq8iWyBmTe574h5aUXCdsggE9YZVu9e2PY8pXpmkR8dAJL95hzDVG1MqEm6nEsYC4JFDE0J9V_OhNxRqfQpvLV-ylIt1h9-E-w42XMA2pUxbUtbAIyN3tWLx1KvxZgOnUD_wQ","version":2}} -->

@@ -5,7 +5,12 @@ defmodule TransitData.GlidesReport.Util do
 
   alias TransitData.GlidesReport
 
-  # Streams all values from an ETS table. (Assuming table's objects are {key, value} 2-tuples)
+  @doc """
+  Streams all values from an ETS table.
+
+  (Assuming table's objects are {key, value} 2-tuples)
+  """
+  @spec stream_values(:ets.table()) :: Enumerable.t()
   def stream_values(table) do
     :ets.first(table)
     |> Stream.iterate(fn key -> :ets.next(table, key) end)
@@ -13,29 +18,94 @@ defmodule TransitData.GlidesReport.Util do
     |> Stream.map(fn key -> :ets.lookup_element(table, key, 2) end)
   end
 
-  # Formats an integer to a string, with left zero-padding to at least `count` digits.
-  def zero_pad(n, count \\ 2) do
+  @doc """
+  Formats an integer to a string, with left zero-padding to at least `count` digits.
+  """
+  @spec zero_pad(non_neg_integer, non_neg_integer) :: String.t()
+  def zero_pad(n, count \\ 2) when is_integer(n) and n >= 0 do
     n
     |> Integer.to_string()
     |> String.pad_leading(count, "0")
   end
 
-  @spec group_by_hour(Enumerable.t({stop_id :: String.t(), timestamp :: integer})) :: %{
-          (hour :: 0..23) => MapSet.t({stop_id :: String.t(), minute :: 0..59})
-        }
-  def group_by_hour(stop_times) do
-    stop_times
-    |> Enum.group_by(
-      fn {_stop_id, timestamp} -> unix_timestamp_to_local_hour(timestamp) end,
-      fn {stop_id, timestamp} -> {stop_id, unix_timestamp_to_local_minute(timestamp)} end
+  @doc """
+  Combines any consecutive, overlapping ranges in an enumerable.
+
+  All ranges in the enumerable must have a step of 1.
+  The returned list will be sorted.
+
+      iex> ranges = [1..2, 3..8, 7..12, 7..10, 15..20]
+      iex> merge_ranges(ranges)
+      [1..2, 3..12, 15..20]
+      iex> merge_ranges(Enum.reverse(ranges)) == merge_ranges(ranges)
+      true
+      iex> merge_ranges(Enum.shuffle(ranges)) == merge_ranges(ranges)
+      true
+
+      iex> merge_ranges([1..2//1, 2..0//-1])
+      ** (ArgumentError) received range(s) with step != 1: [2..0//-1]
+
+      iex> merge_ranges([1..5//2, 3..12//3])
+      ** (ArgumentError) received range(s) with step != 1: [1..5//2, 3..12//3]
+
+      iex> merge_ranges([])
+      []
+  """
+  @spec merge_ranges(Enumerable.t(Range.t())) :: list(Range.t())
+  def merge_ranges(ranges) do
+    bad_ranges = Enum.reject(ranges, &match?(_.._//1, &1))
+
+    unless bad_ranges == [],
+      do: raise(ArgumentError, "received range(s) with step != 1: #{inspect(bad_ranges)}")
+
+    ranges
+    |> Enum.sort_by(fn l.._r//1 -> l end)
+    |> Enum.reject(&(Range.size(&1) == 0))
+    |> Enum.chunk_while(
+      nil,
+      fn
+        range, nil ->
+          {:cont, range}
+
+        range, acc_range ->
+          if Range.disjoint?(range, acc_range),
+            do: {:cont, acc_range, range},
+            else: {:cont, merge_range_pair(acc_range, range)}
+      end,
+      fn
+        nil -> {:cont, nil}
+        final_acc -> {:cont, final_acc, nil}
+      end
     )
-    |> Map.new(fn {hour, stop_minutes} -> {hour, MapSet.new(stop_minutes)} end)
   end
 
+  defp merge_range_pair(l1..r1//1, l2..r2//1) do
+    min(l1, l2)..max(r1, r2)//1
+  end
+
+  @doc """
+  Formats the ratio of two numbers as a percentage.
+  """
+  @spec format_percent(number, number, String.t()) :: String.t()
+  def format_percent(_numerator, denominator, zero_fallback)
+      # Using a guard with `==` instead of directly pattern matching on 0
+      # (which implicitly uses `===`) so that both int 0 and float 0.0
+      # fall within this clause.
+      when denominator == 0 do
+    zero_fallback
+  end
+
+  def format_percent(numerator, denominator, _zero_fallback) do
+    p = round(100.0 * (numerator / denominator))
+    "#{p}%"
+  end
+
+  @spec unix_timestamp_to_local_hour(integer) :: 0..23
   def unix_timestamp_to_local_hour(timestamp) do
     unix_timestamp_to_local_datetime(timestamp).hour
   end
 
+  @spec unix_timestamp_to_local_hour(integer) :: 0..59
   def unix_timestamp_to_local_minute(timestamp) do
     unix_timestamp_to_local_datetime(timestamp).minute
   end
@@ -46,7 +116,10 @@ defmodule TransitData.GlidesReport.Util do
     |> DateTime.shift_zone!("America/New_York")
   end
 
-  # Returns /absolute/path/to/transit_data_reports/dataset
+  @doc """
+  Returns /absolute/path/to/transit_data_reports/dataset.
+  """
+  @spec dataset_dir() :: String.t()
   def dataset_dir do
     # I'm sure there's a more concise way to do this, but I couldn't find it. :\
     project_root =
@@ -58,12 +131,19 @@ defmodule TransitData.GlidesReport.Util do
     Path.join(project_root, "dataset")
   end
 
-  # Converts a nonempty list of KW-lists, e.g.:
-  # [
-  #   [{"headerA", "valueA1"}, {"headerB", "valueB1"}],
-  #   [{"headerA", "valueA2"}, {"headerB", "valueB2"}]
-  # ]
-  # to a CSV string.
+  @doc ~S'''
+  Converts a nonempty list of KW-lists to a CSV string.
+
+      iex> table_to_csv([
+      ...>   [{"headerA", "valueA1"}, {"headerB", "valueB1"}],
+      ...>   [{"headerA", "valueA2"}, {"headerB", "valueB2"}]
+      ...> ])
+      """
+      headerA,headerB
+      valueA1,valueB1
+      valueA2,valueB2
+      """
+  '''
   def table_to_csv(table) do
     table
     |> Stream.map(&Map.new/1)

@@ -8,6 +8,7 @@ defmodule TransitData.MixProject do
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      elixirc_paths: elixirc_paths(Mix.env()),
       dialyzer: [
         plt_add_deps: :app_tree,
         flags: [
@@ -25,6 +26,9 @@ defmodule TransitData.MixProject do
     ]
   end
 
+  defp elixirc_paths(:test), do: ["test/support", "lib"]
+  defp elixirc_paths(_), do: ["lib"]
+
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
@@ -33,14 +37,18 @@ defmodule TransitData.MixProject do
       {:ex_aws, "~> 2.5"},
       {:ex_aws_s3, "~> 2.5"},
       {:hackney, "~> 1.20"},
-      # Provided by Mix.install invocation in the notebook
-      # {:tzdata, "~> 1.1"},
       {:jaxon, "~> 2.0"},
       {:stream_gzip, "~> 0.4.2"},
       {:sweet_xml, "~> 0.7.4"},
+      # TEST-ENV DEPS
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:lcov_ex, "~> 0.3", only: [:dev, :test], runtime: false}
+      {:lcov_ex, "~> 0.3", only: [:dev, :test], runtime: false},
+      {:mox, "~> 1.0", only: :test},
+      {:stream_data, "~> 1.0", only: :test},
+      # Provided by Mix.install invocation in the notebook.
+      # We only need to directly get this dep when running tests.
+      {:tz, "~> 0.26.5", only: [:test]}
     ]
   end
 end
