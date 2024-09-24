@@ -1,0 +1,100 @@
+<!-- livebook:{"file_entries":[{"file":{"file_system_id":"local","file_system_type":"local","path":"/Users/paulswartz/Dropbox/1-Projects/MBTA/Light Rail Terminal Predictions/trips-2024.parquet"},"name":"trips-2024.parquet","type":"file"}],"persist_outputs":true} -->
+
+# Block Adherence
+
+```elixir
+Mix.install([
+  {:explorer, "~> 0.9.2"},
+  {:kino, "~> 0.14.1"}
+])
+```
+
+## Data
+
+```
+$ curl -o trips-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/trips.parquet'
+$ curl -JO 'https://performancedata.mbta.com/lamp/subway-on-time-performance-v1/2024-08-{01-31}-subway-on-time-performance-v1.parquet'
+```
+
+Then add `trips-2024.parquet` as a file for this notebook (sidebar on the left, folder icon, Add file).
+
+```elixir
+require Explorer.DataFrame, as: DF
+alias Explorer.Series, as: S
+
+trips =
+  "trips-2024.parquet"
+  |> Kino.FS.file_path()
+  |> DF.from_parquet!()
+
+blocks =
+  DF.select(trips, [:trip_id, :gtfs_active_date, :gtfs_end_date, :block_id])
+  |> DF.sort_by(desc: gtfs_active_date)
+  |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
+
+# |> DF.group_by([:trip_id, :block_id])
+# |> DF.filter(S.size(gtfs_active_date) > 1)
+# |> DF.summarise(gtfs_active_date: min(gtfs_active_date), gtfs_end_date: max(gtfs_end_date))
+# |> DF.ungroup()
+
+df =
+  "trips-2024.parquet"
+  |> Kino.FS.file_path()
+  |> Path.join("../*-subway-on-time-performance-v1.parquet")
+  |> Path.expand()
+  |> Path.wildcard()
+  |> Enum.flat_map(fn path ->
+    case DF.from_parquet(path) do
+      {:ok, df} -> [df]
+      {:error, _} -> []
+    end
+  end)
+  |> DF.concat_rows()
+
+df =
+  df
+  |> DF.filter(S.contains(route_id, "Green-"))
+
+# |> DF.filter(not S.contains(trip_id, "ADDED-"))
+# |> DF.filter(not S.contains(trip_id, "NONREV-"))
+# |> DF.group_by
+
+df =
+  df
+  |> DF.join(blocks, how: :left, on: :trip_id)
+  |> DF.filter(
+    is_nil(gtfs_active_date) or
+      (gtfs_active_date <= service_date and gtfs_end_date >= service_date)
+  )
+  |> DF.filter(travel_time_seconds > 0)
+  |> DF.mutate(timestamp: select(is_nil(move_timestamp), stop_timestamp, move_timestamp))
+  |> DF.group_by([:service_date, :vehicle_id])
+  # |> DF.summarise(block_count: S.size(block_id))
+  |> DF.sort_by(asc: service_date, asc: vehicle_id, asc: timestamp)
+  # |> DF.select([:timestamp, :service_date, :vehicle_id, :trip_id, :block_id])
+  |> DF.summarise(block_count: S.count(block_id))
+  |> DF.mutate(
+    one_block: select(block_count == 1, 1, 0),
+    zero_or_one_block: select(block_count <= 1, 1, 0)
+  )
+  # |> DF.group_by(:service_date)
+  |> DF.summarise(count: S.count(vehicle_id), one_block: S.sum(one_block), zero_or_one_block: S.sum(zero_or_one_block))
+  |> DF.mutate(one_block_pct: 100 * one_block / count, zero_or_one_block_ct: 100 * zero_or_one_block / count)
+
+Kino.DataTable.new(df)
+```
+
+<!-- livebook:{"output":true} -->
+
+```text
+#Explorer.DataFrame<
+  Polars[1 x 5]
+  count u32 [12115]
+  one_block s64 [732]
+  zero_or_one_block s64 [6614]
+  one_block_pct f64 [6.042096574494429]
+  zero_or_one_block_ct f64 [54.59347915806851]
+>
+```
+
+<!-- livebook:{"offset":3039,"stamp":{"token":"XCP.RY4Ej4I4BWqvOd8Fzdctu_DlMp4PWlhHyOadjMuzWk-4UKUtfNsvlpOd8_UlBl8dkmvrUbkdY4NLLejrVLih6o_tiXF5WQ1nN0-mcw","version":2}} -->
