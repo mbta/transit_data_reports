@@ -1,4 +1,4 @@
-<!-- livebook:{"file_entries":[{"file":{"file_system_id":"local","file_system_type":"local","path":"/Users/paulswartz/Dropbox/1-Projects/MBTA/Light Rail Terminal Predictions/trips-2024.parquet"},"name":"trips-2024.parquet","type":"file"}],"persist_outputs":true} -->
+<!-- livebook:{"file_entries":[{"file":{"file_system_id":"local","file_system_type":"local","path":"/Users/paulswartz/Dropbox/0-Inbox/trainsheet-2024-08-01-2024-08-31.csv"},"name":"trainsheet.csv","type":"file"},{"file":{"file_system_id":"local","file_system_type":"local","path":"/Users/paulswartz/Dropbox/1-Projects/MBTA/Light Rail Terminal Predictions/trips-2024.parquet"},"name":"trips-2024.parquet","type":"file"}],"persist_outputs":true} -->
 
 # Block Adherence
 
@@ -11,12 +11,16 @@ Mix.install([
 
 ## Data
 
-```
+```shell
 $ curl -o trips-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/trips.parquet'
+$ curl -o stop-times-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/stop_times.parquet'
+$ curl -o stops-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/stops.parquet'
 $ curl -JO 'https://performancedata.mbta.com/lamp/subway-on-time-performance-v1/2024-08-{01-31}-subway-on-time-performance-v1.parquet'
 ```
 
 Then add `trips-2024.parquet` as a file for this notebook (sidebar on the left, folder icon, Add file).
+
+You'll also need to download the Trainsheet CSV for 2024-08-01 through 2024-08-31 from Glides, and add it here as `trainsheet.csv`.
 
 ```elixir
 require Explorer.DataFrame, as: DF
@@ -26,17 +30,155 @@ trips =
   "trips-2024.parquet"
   |> Kino.FS.file_path()
   |> DF.from_parquet!()
+  |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
 
+stops =
+  "trips-2024.parquet"
+  |> Kino.FS.file_path()
+  |> Path.join("../stops-2024.parquet")
+  |> Path.expand()
+  |> DF.from_parquet!()
+  |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
+
+:ok
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+```elixir
+parent_stations = stops
+|> DF.mutate(parent_station: select(is_nil(parent_station),stop_id,parent_station))
+|> DF.select([:stop_id,:parent_station])
+|> DF.distinct()
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Explorer.DataFrame<
+  Polars[10212 x 2]
+  stop_id string ["9170012", "9070013", "9070010", "9070004", "9070003", ...]
+  parent_station string ["9170012", "9070013", "9070010", "9070004", "9070003", ...]
+>
+```
+
+```elixir
+gtfs_time_to_seconds = fn s ->
+  str = S.split_into(s, ":", ["hour", "minute", "second"])
+  hour = S.field(str, :hour) |> S.cast(:s32)
+  minute = S.field(str, :minute) |> S.cast(:s32)
+  second = S.field(str, :second) |> S.cast(:s32)
+
+  S.add(
+    S.multiply(hour, 3600),
+    S.multiply(minute, 60)
+  )
+  |> S.add(second)
+
+  # S.strptime(s, "%H:%M")
+end
+
+stop_times =
+  "trips-2024.parquet"
+  |> Kino.FS.file_path()
+  |> Path.join("../stop-times-2024.parquet")
+  |> Path.expand()
+  |> DF.from_parquet!()
+  |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
+  |> DF.mutate_with(fn df ->
+    [
+      departure_time: gtfs_time_to_seconds.(df[:departure_time]),
+      arrival_time: gtfs_time_to_seconds.(df[:arrival_time])
+    ]
+  end)
+  |> DF.group_by([:gtfs_active_date, :gtfs_end_date, :trip_id])
+  # |> DF.sort_by(asc: stop_sequence)
+  # |> DF.summarise(departure_time: S.first(departure_time), arrival_time: S.last(arrival_time))
+  |> DF.summarise_with(fn df ->
+    argsort = S.argsort(df[:stop_sequence])
+    departure_time = df[:departure_time] |> S.slice(argsort) |> S.first()
+    departure_stop = df[:stop_id] |> S.slice(argsort) |> S.first()
+    arrival_time = df[:arrival_time] |> S.slice(argsort) |> S.last()
+    arrival_stop = df[:stop_id] |> S.slice(argsort) |> S.last()
+
+    [
+      departure_time: departure_time,
+      departure_stop_id: departure_stop,
+      arrival_time: arrival_time,
+      arrival_stop_id: arrival_stop
+    ]
+  end)
+  |> DF.join(parent_stations, on: [departure_stop_id: :stop_id])
+  |> DF.rename(parent_station: :departure_station)
+  |> DF.join(parent_stations, on: [arrival_stop_id: :stop_id])
+  |> DF.rename(parent_station: :arrival_station)
+
+DF.filter(stop_times, trip_id == "62822419")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Explorer.DataFrame<
+  Polars[1 x 9]
+  gtfs_active_date s32 [20240608]
+  gtfs_end_date s32 [20240904]
+  trip_id string ["62822419"]
+  departure_time s64 [86700]
+  departure_stop_id string ["110"]
+  arrival_time s64 [88440]
+  arrival_stop_id string ["64"]
+  departure_station string ["110"]
+  arrival_station string ["place-nubn"]
+>
+```
+
+```elixir
 blocks =
   DF.select(trips, [:trip_id, :gtfs_active_date, :gtfs_end_date, :block_id])
   |> DF.sort_by(desc: gtfs_active_date)
   |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
+  |> DF.join(stop_times, on: :trip_id, how: :left)
+  |> DF.filter(
+    gtfs_active_date_right <= gtfs_active_date and gtfs_end_date_right >= gtfs_end_date
+  )
+  |> DF.discard([:gtfs_active_date_right, :gtfs_end_date_right])
+  |> DF.group_by([:gtfs_active_date, :block_id])
+  |> DF.sort_by(asc: departure_time)
+  |> DF.mutate(block_sequence: S.row_index(trip_id) + 1)
+  |> DF.sort_by(asc: gtfs_active_date, asc: block_id)
 
 # |> DF.group_by([:trip_id, :block_id])
 # |> DF.filter(S.size(gtfs_active_date) > 1)
 # |> DF.summarise(gtfs_active_date: min(gtfs_active_date), gtfs_end_date: max(gtfs_end_date))
 # |> DF.ungroup()
+```
 
+<!-- livebook:{"output":true} -->
+
+```
+#Explorer.DataFrame<
+  Polars[152897 x 11]
+  Groups: ["gtfs_active_date", "block_id"]
+  trip_id string ["62822243", "62822336", "62822249", "62822344", "62822255", ...]
+  gtfs_active_date s32 [20240831, 20240831, 20240831, 20240831, 20240831, ...]
+  gtfs_end_date s32 [20240904, 20240904, 20240904, 20240904, 20240904, ...]
+  block_id string ["C01-12", "C01-12", "C01-12", "C01-12", "C01-12", ...]
+  departure_time s64 [25320, 27300, 29760, 31800, 34140, ...]
+  departure_stop_id string ["64", "110", "64", "110", "64", ...]
+  arrival_time s64 [27000, 28980, 31440, 33720, 36120, ...]
+  arrival_stop_id string ["110", "64", "110", "64", "110", ...]
+  departure_station string ["place-nubn", "110", "place-nubn", "110", "place-nubn", ...]
+  arrival_station string ["110", "place-nubn", "110", "place-nubn", "110", ...]
+  block_sequence s64 [1, 2, 3, 4, 5, ...]
+>
+```
+
+```elixir
 df =
   "trips-2024.parquet"
   |> Kino.FS.file_path()
@@ -50,10 +192,51 @@ df =
     end
   end)
   |> DF.concat_rows()
+```
 
+<!-- livebook:{"output":true} -->
+
+```
+#Explorer.DataFrame<
+  Polars[1186672 x 27]
+  stop_sequence s16 [320, 310, 40, 40, 660, ...]
+  stop_id string ["70162", "70107", "70051", "70051", "70503", ...]
+  parent_station string ["place-woodl", "place-lake", "place-orhte", "place-orhte", "place-unsqu",
+   ...]
+  move_timestamp s64 [1722499511, nil, 1722501862, nil, 1722501980, ...]
+  stop_timestamp s64 [nil, 1722499796, nil, 1722501886, 1722502138, ...]
+  travel_time_seconds s64 [nil, nil, nil, nil, 158, ...]
+  dwell_time_seconds s64 [nil, nil, nil, nil, nil, ...]
+  headway_trunk_seconds s64 [nil, nil, nil, nil, nil, ...]
+  headway_branch_seconds s64 [nil, nil, nil, nil, nil, ...]
+  service_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
+  route_id string ["Green-D", "Green-B", "Blue", "Blue", "Green-D", ...]
+  direction_id boolean [true, false, false, false, true, ...]
+  start_time s64 [14712, 14402, 17063, 18480, 17460, ...]
+  vehicle_id string ["G-10037", "G-10012", "B-547DC1D2", "B-547DC1D2", "G-10046", ...]
+  branch_route_id string ["Green-D", "Green-B", nil, nil, "Green-D", ...]
+  trunk_route_id string ["Green", "Green", "Blue", "Blue", "Green", ...]
+  stop_count s16 [1, 1, 1, 8, 1, ...]
+  trip_id string ["ADDED-1582000863", "ADDED-1582000862", "NONREV-1580581567", "NONREV-1580581568",
+   "62922273", ...]
+  vehicle_label string ["3844", "3846", "0711", "0711", "3696-3829", ...]
+  vehicle_consist string ["3844", "3846", "0711|0710|0754|0755|0746|0747",
+   "0711|0710|0754|0755|0746|0747", "3696|3829", ...]
+  direction string ["East", "West", "West", "West", "East", ...]
+  direction_destination string ["Union Square", "Boston College", "Bowdoin", "Bowdoin",
+   "Union Square", ...]
+  scheduled_arrival_time s64 [nil, 23340, 18480, 18480, 21060, ...]
+  scheduled_departure_time s64 [nil, 23340, 18480, 18480, 21060, ...]
+  scheduled_travel_time s64 [nil, 180, nil, nil, 300, ...]
+  scheduled_headway_branch s64 [nil, nil, nil, nil, 360, ...]
+  scheduled_headway_trunk s64 [nil, nil, nil, nil, 360, ...]
+>
+```
+
+```elixir
 df =
   df
-  |> DF.filter(S.contains(route_id, "Green-"))
+  |> DF.filter(trunk_route_id=="Green")
 
 # |> DF.filter(not S.contains(trip_id, "ADDED-"))
 # |> DF.filter(not S.contains(trip_id, "NONREV-"))
@@ -66,35 +249,160 @@ df =
     is_nil(gtfs_active_date) or
       (gtfs_active_date <= service_date and gtfs_end_date >= service_date)
   )
-  |> DF.filter(travel_time_seconds > 0)
+  #|> DF.filter(travel_time_seconds > 0)
   |> DF.mutate(timestamp: select(is_nil(move_timestamp), stop_timestamp, move_timestamp))
-  |> DF.group_by([:service_date, :vehicle_id])
-  # |> DF.summarise(block_count: S.size(block_id))
   |> DF.sort_by(asc: service_date, asc: vehicle_id, asc: timestamp)
-  # |> DF.select([:timestamp, :service_date, :vehicle_id, :trip_id, :block_id])
-  |> DF.summarise(block_count: S.count(block_id))
-  |> DF.mutate(
-    one_block: select(block_count == 1, 1, 0),
-    zero_or_one_block: select(block_count <= 1, 1, 0)
-  )
-  # |> DF.group_by(:service_date)
-  |> DF.summarise(count: S.count(vehicle_id), one_block: S.sum(one_block), zero_or_one_block: S.sum(zero_or_one_block))
-  |> DF.mutate(one_block_pct: 100 * one_block / count, zero_or_one_block_ct: 100 * zero_or_one_block / count)
+  #|> DF.distinct([:service_date, :vehicle_id, :trip_id], keep_all: true)
 
-Kino.DataTable.new(df)
+df
+#|> DF.filter()
+|> DF.select([:service_date, :vehicle_id, :timestamp, :trip_id, :block_id, :block_sequence])
+|> Kino.DataTable.new()
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```text
 #Explorer.DataFrame<
-  Polars[1 x 5]
-  count u32 [12115]
-  one_block s64 [732]
-  zero_or_one_block s64 [6614]
-  one_block_pct f64 [6.042096574494429]
-  zero_or_one_block_ct f64 [54.59347915806851]
+  Polars[717260 x 6]
+  service_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
+  vehicle_id string ["G-10001", "G-10001", "G-10002", "G-10002", "G-10002", ...]
+  timestamp s64 [1722516403, 1722516410, 1722501999, 1722502017, 1722502119, ...]
+  trip_id string ["ADDED-1582001076", "ADDED-1582001076", "ADDED-1582000864", "ADDED-1582000864", "ADDED-1582000864", ...]
+  block_id string [nil, nil, nil, nil, nil, ...]
+  block_sequence s64 [nil, nil, nil, nil, nil, ...]
 >
 ```
 
-<!-- livebook:{"offset":3039,"stamp":{"token":"XCP.RY4Ej4I4BWqvOd8Fzdctu_DlMp4PWlhHyOadjMuzWk-4UKUtfNsvlpOd8_UlBl8dkmvrUbkdY4NLLejrVLih6o_tiXF5WQ1nN0-mcw","version":2}} -->
+```elixir
+df
+|> DF.group_by([:service_date, :vehicle_id])
+# |> DF.select([:timestamp, :service_date, :vehicle_id, :trip_id, :block_id])
+|> DF.summarise(block_count: S.count(block_id))
+|> DF.mutate(
+  one_block: select(block_count == 1, 1, 0),
+  zero_or_one_block: select(block_count <= 1, 1, 0)
+)
+ |> DF.group_by(:service_date)
+|> DF.summarise(
+  count: S.count(vehicle_id),
+  one_block: S.sum(one_block),
+  zero_or_one_block: S.sum(zero_or_one_block)
+)
+|> DF.mutate(
+  one_block_pct: 100 * one_block / count,
+  zero_or_one_block_ct: 100 * zero_or_one_block / count
+)
+|> Kino.DataTable.new()
+```
+
+<!-- livebook:{"output":true} -->
+
+```text
+#Explorer.DataFrame<
+  Polars[31 x 6]
+  service_date s64 [20240801, 20240802, 20240803, 20240804, 20240805, ...]
+  count u32 [399, 303, 217, 229, 450, ...]
+  one_block s64 [17, 12, 9, 8, 20, ...]
+  zero_or_one_block s64 [200, 142, 101, 118, 241, ...]
+  one_block_pct f64 [4.260651629072682, 3.9603960396039604, 4.147465437788019, 3.493449781659389, 4.444444444444445, ...]
+  zero_or_one_block_ct f64 [50.12531328320802, 46.864686468646866, 46.54377880184332, 51.52838427947598, 53.55555555555556, ...]
+>
+```
+
+```elixir
+df2 =
+  "trainsheet.csv"
+  |> Kino.FS.file_path()
+  |> DF.from_csv!(dtypes: %{car0: :string, car1: :string})
+  |> DF.mutate(
+    service_year: cast(S.substring(service_date, 1, 4), :s32),
+    service_month: cast(S.substring(service_date, 6, 2), :s32),
+    service_day: cast(S.substring(service_date, 9, 2), :s32)
+  )
+  |> DF.mutate(
+    service_date: service_day + 100 * service_month + 10000 * service_year,
+    min_car: select(car0 < car1, car0, car1),
+    max_car: select(car0 < car1, car1, car0)
+  )
+  |> DF.mutate(consist: min_car <> "-" <> max_car)
+  |> DF.filter(consist != "-")
+  |> DF.discard([:service_year, :service_month, :service_day])
+  |> DF.join(blocks,
+    how: :left,
+    on: [
+      scheduled_start_station: :departure_station,
+      scheduled_end_station: :arrival_station,
+      scheduled_departure: :departure_time
+    ]
+  )
+  |> DF.filter(gtfs_active_date <= service_date and gtfs_end_date >= service_date)
+  |> DF.sort_by(asc: service_date, asc: scheduled_departure, asc: gtfs_active_date)
+  |> DF.distinct([:service_date, :scheduled_trip_id], keep_all: true)
+
+Kino.DataTable.new(df2 |> DF.filter(block_id=="B800-53"))
+```
+
+<!-- livebook:{"output":true} -->
+
+```text
+#Explorer.DataFrame<
+  Polars[408 x 23]
+  service_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
+  scheduled_trip_id string ["alb34011-esomr-mdftf-0500", "alb34011-mdftf-hsmnl-0512", "alb34011-hsmnl-mdftf-0613", "alb34011-mdftf-hsmnl-0714", "alb34011-hsmnl-mdftf-0819", ...]
+  scheduled_start_station string ["place-esomr", "place-mdftf", "place-hsmnl", "place-mdftf", "place-hsmnl", ...]
+  scheduled_end_station string ["place-mdftf", "place-hsmnl", "place-mdftf", "place-hsmnl", "place-mdftf", ...]
+  scheduled_departure s64 [18000, 18720, 22380, 26040, 29940, ...]
+  scheduled_arrival s64 [18540, 21720, 25320, 29280, 33180, ...]
+  actual_start_station string [nil, nil, nil, nil, nil, ...]
+  actual_end_station string [nil, nil, nil, nil, nil, ...]
+  actual_departure s64 [nil, 18720, nil, 26040, nil, ...]
+  detected_departure s64 [18311, 18748, 21863, 26009, 29058, ...]
+  car0 string ["3663", "3837", "3837", "3833", "3833", ...]
+  car1 string ["3837", "3663", "3663", "3621", "3621", ...]
+  min_car string ["3663", "3663", "3663", "3621", "3621", ...]
+  max_car string ["3837", "3837", "3837", "3833", "3833", ...]
+  consist string ["3663-3837", "3663-3837", "3663-3837", "3621-3833", "3621-3833", ...]
+  trip_id string ["62921905", "62921906", "62921907", "62921908", "62921909", ...]
+  gtfs_active_date s32 [20240608, 20240608, 20240608, 20240608, 20240608, ...]
+  gtfs_end_date s32 [20240904, 20240904, 20240904, 20240904, 20240904, ...]
+  block_id string ["B800-53", "B800-53", "B800-53", "B800-53", "B800-53", ...]
+  departure_stop_id string ["70513", "70512", "70260", "70512", "70260", ...]
+  arrival_time s64 [18540, 21720, 25320, 29280, 33180, ...]
+  arrival_stop_id string ["70511", "70260", "70511", "70260", "70511", ...]
+  block_sequence s64 [1, 2, 3, 4, 5, ...]
+>
+```
+
+```elixir
+
+df2
+|> DF.group_by([:service_date, :block_id])
+|> DF.summarise(car_count: S.n_distinct(consist))
+|> DF.ungroup()
+|> DF.mutate(one_car: select(car_count < 2, 1, 0))
+|> DF.summarise(
+  min: min(car_count),
+  median: median(car_count),
+  max: max(car_count),
+  size: size(car_count),
+  one_car: sum(one_car)
+)
+|> DF.mutate(one_car_pct: 100 * one_car / size)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Explorer.DataFrame<
+  Polars[1 x 6]
+  min u32 [1]
+  median f64 [6.0]
+  max u32 [14]
+  size u32 [2210]
+  one_car s64 [95]
+  one_car_pct f64 [4.298642533936651]
+>
+```
+
+<!-- livebook:{"offset":14524,"stamp":{"token":"XCP.dMHsQ2MHe6JP5h3ylPmWUmrEdZFSI4tjHg2GZTjdK6OwdtbT366YHQNnBQZr0aCzX0uCUCHdDcuyqpDPuSp08WqDf8_vWS3qyVeK3g","version":2}} -->
