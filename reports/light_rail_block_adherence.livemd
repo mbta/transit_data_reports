@@ -15,6 +15,9 @@ Mix.install([
 $ curl -o trips-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/trips.parquet'
 $ curl -o stop-times-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/stop_times.parquet'
 $ curl -o stops-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/stops.parquet'
+$ curl -o calendar-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/calendar.parquet'
+$ curl -o calendar-dates-2024.parquet 'https://performancedata.mbta.com/lamp/gtfs_archive/2024/calendar_dates.parquet'
+
 $ curl -JO 'https://performancedata.mbta.com/lamp/subway-on-time-performance-v1/2024-08-{01-31}-subway-on-time-performance-v1.parquet'
 ```
 
@@ -36,6 +39,22 @@ stops =
   "trips-2024.parquet"
   |> Kino.FS.file_path()
   |> Path.join("../stops-2024.parquet")
+  |> Path.expand()
+  |> DF.from_parquet!()
+  |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
+
+calendar =
+  "trips-2024.parquet"
+  |> Kino.FS.file_path()
+  |> Path.join("../calendar-2024.parquet")
+  |> Path.expand()
+  |> DF.from_parquet!()
+  |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
+
+calendar_dates =
+  "trips-2024.parquet"
+  |> Kino.FS.file_path()
+  |> Path.join("../calendar-dates-2024.parquet")
   |> Path.expand()
   |> DF.from_parquet!()
   |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
@@ -138,19 +157,45 @@ DF.filter(stop_times, trip_id == "62822419")
 ```
 
 ```elixir
+calendar_filtered =
+  calendar
+  |> DF.mutate(
+    start_date: select(start_date > gtfs_active_date, start_date, gtfs_active_date),
+    end_date: select(end_date < gtfs_end_date, end_date, gtfs_end_date)
+  )
+  |> DF.filter(end_date >= start_date)
+  |> DF.discard([:gtfs_active_date, :gtfs_end_date])
+
 blocks =
-  DF.select(trips, [:trip_id, :gtfs_active_date, :gtfs_end_date, :block_id])
+  DF.select(trips, [:trip_id, :service_id, :gtfs_active_date, :gtfs_end_date, :block_id])
   |> DF.sort_by(desc: gtfs_active_date)
   |> DF.filter(gtfs_end_date >= 20_240_801 and gtfs_active_date <= 20_240_831)
   |> DF.join(stop_times, on: :trip_id, how: :left)
-  |> DF.filter(
-    gtfs_active_date_right <= gtfs_active_date and gtfs_end_date_right >= gtfs_end_date
+  # |> DF.filter(
+  #   gtfs_active_date_right <= gtfs_end_date and gtfs_end_date_right >= gtfs_active_date
+  # )
+  |> DF.mutate(
+    gtfs_active_date:
+      select(gtfs_active_date > gtfs_active_date_right, gtfs_active_date, gtfs_active_date_right),
+    gtfs_end_date: select(gtfs_end_date < gtfs_end_date_right, gtfs_end_date, gtfs_end_date_right)
   )
+  |> DF.filter(gtfs_active_date <= gtfs_end_date)
   |> DF.discard([:gtfs_active_date_right, :gtfs_end_date_right])
-  |> DF.group_by([:gtfs_active_date, :block_id])
+  |> DF.join(calendar_filtered, on: :service_id, how: :inner)
+  # |> DF.filter(
+  #   (start_date <= gtfs_end_date and end_date >= gtfs_active_date) or
+  #   (gtfs_active_date <= end_date and gtfs_end_date >= start_date)
+  # )
+  |> DF.mutate(
+    gtfs_active_date: select(gtfs_active_date > start_date, gtfs_active_date, start_date),
+    gtfs_end_date: select(gtfs_end_date < end_date, gtfs_end_date, end_date)
+  )
+  |> DF.filter(gtfs_active_date <= gtfs_end_date)
+  # |> DF.discard([:gtfs_active_date_right, :gtfs_end_date_right])
+  |> DF.group_by([:gtfs_active_date, :service_id, :block_id])
   |> DF.sort_by(asc: departure_time)
   |> DF.mutate(block_sequence: S.row_index(trip_id) + 1)
-  |> DF.sort_by(asc: gtfs_active_date, asc: block_id)
+  |> DF.sort_by(asc: gtfs_active_date, asc: service_id, asc: block_id)
 
 # |> DF.group_by([:trip_id, :block_id])
 # |> DF.filter(S.size(gtfs_active_date) > 1)
@@ -162,19 +207,109 @@ blocks =
 
 ```
 #Explorer.DataFrame<
-  Polars[152897 x 11]
-  Groups: ["gtfs_active_date", "block_id"]
-  trip_id string ["62822243", "62822336", "62822249", "62822344", "62822255", ...]
-  gtfs_active_date s32 [20240831, 20240831, 20240831, 20240831, 20240831, ...]
-  gtfs_end_date s32 [20240904, 20240904, 20240904, 20240904, 20240904, ...]
-  block_id string ["C01-12", "C01-12", "C01-12", "C01-12", "C01-12", ...]
-  departure_time s64 [25320, 27300, 29760, 31800, 34140, ...]
-  departure_stop_id string ["64", "110", "64", "110", "64", ...]
-  arrival_time s64 [27000, 28980, 31440, 33720, 36120, ...]
-  arrival_stop_id string ["110", "64", "110", "64", "110", ...]
-  departure_station string ["place-nubn", "110", "place-nubn", "110", "place-nubn", ...]
-  arrival_station string ["110", "place-nubn", "110", "place-nubn", "110", ...]
+  Polars[243862 x 21]
+  Groups: ["gtfs_active_date", "service_id", "block_id"]
+  trip_id string ["AirportWonderland-Weekday-c0986-0-00:00:00",
+   "AirportWonderland-Weekday-c0986-1-00:00:00",
+   "AlewifeHarvardViaHolyoke-Weekday-c0986-0-00:00:00",
+   "AlewifeHarvardViaHolyoke-Weekday-c0986-1-00:00:00", "AlewifeKendall-Weekday-c0986-1-00:00:00",
+   ...]
+  service_id string ["canonical", "canonical", "canonical", "canonical", "canonical", ...]
+  gtfs_active_date s64 [20240831, 20240831, 20240831, 20240831, 20240831, ...]
+  gtfs_end_date s64 [20240904, 20240904, 20240904, 20240904, 20240904, ...]
+  block_id string [nil, nil, nil, nil, nil, ...]
+  departure_time s64 [0, 0, 0, 0, 0, ...]
+  departure_stop_id string ["15795", "7096", "110", "141", "9070071", ...]
+  arrival_time s64 [999, 929, 718, 758, 1280, ...]
+  arrival_stop_id string ["7096", "15795", "141", "110", "141", ...]
+  departure_station string ["place-wondl", "place-aport", "110", "place-alfcl", "9070071", ...]
+  arrival_station string ["place-aport", "place-wondl", "place-alfcl", "110", "place-alfcl", ...]
+  monday s64 [0, 0, 0, 0, 0, ...]
+  tuesday s64 [0, 0, 0, 0, 0, ...]
+  wednesday s64 [0, 0, 0, 0, 0, ...]
+  thursday s64 [0, 0, 0, 0, 0, ...]
+  friday s64 [0, 0, 0, 0, 0, ...]
+  saturday s64 [0, 0, 0, 0, 0, ...]
+  sunday s64 [0, 0, 0, 0, 0, ...]
+  start_date s64 [20240831, 20240831, 20240831, 20240831, 20240831, ...]
+  end_date s64 [20240904, 20240904, 20240904, 20240904, 20240904, ...]
   block_sequence s64 [1, 2, 3, 4, 5, ...]
+>
+```
+
+```elixir
+calendar
+|> DF.mutate(
+  start_date: select(start_date > gtfs_active_date, start_date, gtfs_active_date),
+  end_date: select(end_date < gtfs_end_date, end_date, gtfs_end_date)
+)
+|> DF.filter(end_date >= start_date)
+|> DF.discard([:gtfs_active_date, :gtfs_end_date])
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Explorer.DataFrame<
+  Polars[498 x 10]
+  service_id string ["RTL32024-hmo34011-Weekday-01", "SPRING2024-SOUTHWKD-Weekday-1", "canonical",
+   "BUS32024-hbq34ns1-Weekday-02", "BUS32024-hbt34ns1-Weekday-02", ...]
+  monday s64 [1, 1, 0, 1, 1, ...]
+  tuesday s64 [1, 1, 0, 1, 1, ...]
+  wednesday s64 [1, 1, 0, 1, 1, ...]
+  thursday s64 [1, 1, 0, 1, 1, ...]
+  friday s64 [1, 1, 0, 1, 1, ...]
+  saturday s64 [0, 0, 0, 0, 0, ...]
+  sunday s64 [0, 0, 0, 0, 0, ...]
+  start_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
+  end_date s64 [20240802, 20240802, 20240802, 20240802, 20240802, ...]
+>
+```
+
+```elixir
+blocks
+|> DF.filter(block_id == "B800-50" and thursday == 1 and block_sequence == 2)
+|> DF.filter(
+  gtfs_active_date <= 20_240_801 and gtfs_end_date >= 20_240_801 and start_date <= 20_240_801 and
+    end_date >= 20_240_801
+)
+|> DF.sort_by(asc: gtfs_active_date)
+
+# trips
+# |> DF.filter(block_id=="B800-50" and gtfs_active_date <= 20240801 and gtfs_end_date>=20240801)
+# |> DF.join(calendar, on: :service_id, how: :left)
+# |> DF.filter(gtfs_active_date_right <= 20240801 and gtfs_end_date_right >= 20240801)
+# |> DF.filter(thursday==1)
+# |> DF.filter(start_date<=20240801 and end_date>=20240801)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Explorer.DataFrame<
+  Polars[1 x 21]
+  Groups: ["gtfs_active_date", "service_id", "block_id"]
+  trip_id string ["62922253"]
+  service_id string ["LRV32024-hlb34011-Weekday-01"]
+  gtfs_active_date s64 [20240801]
+  gtfs_end_date s64 [20240802]
+  block_id string ["B800-50"]
+  departure_time s64 [20580]
+  departure_stop_id string ["70504"]
+  arrival_time s64 [24360]
+  arrival_stop_id string ["70161"]
+  departure_station string ["place-unsqu"]
+  arrival_station string ["place-river"]
+  monday s64 [1]
+  tuesday s64 [1]
+  wednesday s64 [1]
+  thursday s64 [1]
+  friday s64 [1]
+  saturday s64 [0]
+  sunday s64 [0]
+  start_date s64 [20240801]
+  end_date s64 [20240802]
+  block_sequence s64 [2]
 >
 ```
 
@@ -236,7 +371,7 @@ df =
 ```elixir
 df =
   df
-  |> DF.filter(trunk_route_id=="Green")
+  |> DF.filter(trunk_route_id == "Green")
 
 # |> DF.filter(not S.contains(trip_id, "ADDED-"))
 # |> DF.filter(not S.contains(trip_id, "NONREV-"))
@@ -249,14 +384,15 @@ df =
     is_nil(gtfs_active_date) or
       (gtfs_active_date <= service_date and gtfs_end_date >= service_date)
   )
-  #|> DF.filter(travel_time_seconds > 0)
+  # |> DF.filter(travel_time_seconds > 0)
   |> DF.mutate(timestamp: select(is_nil(move_timestamp), stop_timestamp, move_timestamp))
   |> DF.sort_by(asc: service_date, asc: vehicle_id, asc: timestamp)
-  #|> DF.distinct([:service_date, :vehicle_id, :trip_id], keep_all: true)
+
+# |> DF.distinct([:service_date, :vehicle_id, :trip_id], keep_all: true)
 
 df
-#|> DF.filter()
-|> DF.select([:service_date, :vehicle_id, :timestamp, :trip_id, :block_id, :block_sequence])
+# |> DF.filter()
+# |> DF.select([:service_date, :vehicle_id, :timestamp, :trip_id, :block_id, :block_sequence])
 |> Kino.DataTable.new()
 ```
 
@@ -264,13 +400,55 @@ df
 
 ```text
 #Explorer.DataFrame<
-  Polars[717260 x 6]
+  Polars[717260 x 48]
+  stop_sequence s16 [310, 320, 310, 320, 330, ...]
+  stop_id string ["70160", "70162", "70160", "70162", "70164", ...]
+  parent_station string ["place-river", "place-woodl", "place-river", "place-woodl", "place-waban", ...]
+  move_timestamp s64 [nil, 1722516410, nil, 1722502017, 1722502119, ...]
+  stop_timestamp s64 [1722516403, 1722516465, 1722501999, 1722502083, 1722502215, ...]
+  travel_time_seconds s64 [nil, 55, nil, 66, 96, ...]
+  dwell_time_seconds s64 [nil, nil, nil, 36, 18, ...]
+  headway_trunk_seconds s64 [397, nil, nil, nil, nil, ...]
+  headway_branch_seconds s64 [397, nil, nil, nil, nil, ...]
   service_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
+  route_id string ["Green-D", "Green-D", "Green-D", "Green-D", "Green-D", ...]
+  direction_id boolean [true, true, true, true, true, ...]
+  start_time s64 [31605, 31605, 17200, 17200, 17200, ...]
   vehicle_id string ["G-10001", "G-10001", "G-10002", "G-10002", "G-10002", ...]
-  timestamp s64 [1722516403, 1722516410, 1722501999, 1722502017, 1722502119, ...]
+  branch_route_id string ["Green-D", "Green-D", "Green-D", "Green-D", "Green-D", ...]
+  trunk_route_id string ["Green", "Green", "Green", "Green", "Green", ...]
+  stop_count s16 [2, 2, 25, 25, 25, ...]
   trip_id string ["ADDED-1582001076", "ADDED-1582001076", "ADDED-1582000864", "ADDED-1582000864", "ADDED-1582000864", ...]
+  vehicle_label string ["3836", "3836", "3835-3698", "3835-3698", "3835-3698", ...]
+  vehicle_consist string ["3836", "3836", "3835|3698", "3835|3698", "3835|3698", ...]
+  direction string ["East", "East", "East", "East", "East", ...]
+  direction_destination string ["Union Square", "Union Square", "Union Square", "Union Square", "Union Square", ...]
+  scheduled_arrival_time s64 [31620, 31680, nil, nil, nil, ...]
+  scheduled_departure_time s64 [31620, 31680, nil, nil, nil, ...]
+  scheduled_travel_time s64 [nil, 60, nil, nil, nil, ...]
+  scheduled_headway_branch s64 [540, 540, nil, nil, nil, ...]
+  scheduled_headway_trunk s64 [540, 540, nil, nil, nil, ...]
+  service_id string [nil, nil, nil, nil, nil, ...]
+  gtfs_active_date s64 [nil, nil, nil, nil, nil, ...]
+  gtfs_end_date s64 [nil, nil, nil, nil, nil, ...]
   block_id string [nil, nil, nil, nil, nil, ...]
+  departure_time s64 [nil, nil, nil, nil, nil, ...]
+  departure_stop_id string [nil, nil, nil, nil, nil, ...]
+  arrival_time s64 [nil, nil, nil, nil, nil, ...]
+  arrival_stop_id string [nil, nil, nil, nil, nil, ...]
+  departure_station string [nil, nil, nil, nil, nil, ...]
+  arrival_station string [nil, nil, nil, nil, nil, ...]
+  monday s64 [nil, nil, nil, nil, nil, ...]
+  tuesday s64 [nil, nil, nil, nil, nil, ...]
+  wednesday s64 [nil, nil, nil, nil, nil, ...]
+  thursday s64 [nil, nil, nil, nil, nil, ...]
+  friday s64 [nil, nil, nil, nil, nil, ...]
+  saturday s64 [nil, nil, nil, nil, nil, ...]
+  sunday s64 [nil, nil, nil, nil, nil, ...]
+  start_date s64 [nil, nil, nil, nil, nil, ...]
+  end_date s64 [nil, nil, nil, nil, nil, ...]
   block_sequence s64 [nil, nil, nil, nil, nil, ...]
+  timestamp s64 [1722516403, 1722516410, 1722501999, 1722502017, 1722502119, ...]
 >
 ```
 
@@ -283,7 +461,7 @@ df
   one_block: select(block_count == 1, 1, 0),
   zero_or_one_block: select(block_count <= 1, 1, 0)
 )
- |> DF.group_by(:service_date)
+|> DF.group_by(:service_date)
 |> DF.summarise(
   count: S.count(vehicle_id),
   one_block: S.sum(one_block),
@@ -318,15 +496,16 @@ df2 =
   |> DF.mutate(
     service_year: cast(S.substring(service_date, 1, 4), :s32),
     service_month: cast(S.substring(service_date, 6, 2), :s32),
-    service_day: cast(S.substring(service_date, 9, 2), :s32)
+    service_day: cast(S.substring(service_date, 9, 2), :s32),
+    service_date: cast(S.substring(service_date, 1, 10), :date)
   )
   |> DF.mutate(
+    service_dow: day_of_week(service_date),
     service_date: service_day + 100 * service_month + 10000 * service_year,
     min_car: select(car0 < car1, car0, car1),
     max_car: select(car0 < car1, car1, car0)
   )
   |> DF.mutate(consist: min_car <> "-" <> max_car)
-  |> DF.filter(consist != "-")
   |> DF.discard([:service_year, :service_month, :service_day])
   |> DF.join(blocks,
     how: :left,
@@ -336,51 +515,93 @@ df2 =
       scheduled_departure: :departure_time
     ]
   )
-  |> DF.filter(gtfs_active_date <= service_date and gtfs_end_date >= service_date)
-  |> DF.sort_by(asc: service_date, asc: scheduled_departure, asc: gtfs_active_date)
-  |> DF.distinct([:service_date, :scheduled_trip_id], keep_all: true)
+  |> DF.filter(
+    gtfs_active_date <= service_date and gtfs_end_date >= service_date and
+      start_date <= service_date and end_date >= service_date
+  )
+  |> DF.filter(
+    (service_dow == 1 and monday == 1) or (service_dow == 2 and tuesday == 1) or
+      (service_dow == 3 and wednesday == 1) or (service_dow == 4 and thursday == 1) or
+      (service_dow == 5 and friday == 1) or
+      (service_dow == 6 and saturday == 1) or
+      (service_dow == 7 and sunday == 1)
+  )
 
-Kino.DataTable.new(df2 |> DF.filter(block_id=="B800-53"))
+# |> DF.sort_by(asc: service_date, asc: scheduled_departure, asc: gtfs_active_date)
+# |> DF.distinct([:service_date, :scheduled_trip_id], keep_all: true)
+
+Kino.DataTable.new(df2 |> DF.filter(service_date == 20_240_805))
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```text
 #Explorer.DataFrame<
-  Polars[408 x 23]
-  service_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
-  scheduled_trip_id string ["alb34011-esomr-mdftf-0500", "alb34011-mdftf-hsmnl-0512", "alb34011-hsmnl-mdftf-0613", "alb34011-mdftf-hsmnl-0714", "alb34011-hsmnl-mdftf-0819", ...]
-  scheduled_start_station string ["place-esomr", "place-mdftf", "place-hsmnl", "place-mdftf", "place-hsmnl", ...]
-  scheduled_end_station string ["place-mdftf", "place-hsmnl", "place-mdftf", "place-hsmnl", "place-mdftf", ...]
-  scheduled_departure s64 [18000, 18720, 22380, 26040, 29940, ...]
-  scheduled_arrival s64 [18540, 21720, 25320, 29280, 33180, ...]
+  Polars[1165 x 34]
+  service_date s64 [20240805, 20240805, 20240805, 20240805, 20240805, ...]
+  scheduled_trip_id string ["alb34011-mdftf-hsmnl-0944", "alb34011-mdftf-hsmnl-0951", "alb34011-mdftf-hsmnl-0742", "alb34011-mdftf-hsmnl-1049", "alb34011-river-mdftf-0456", ...]
+  scheduled_start_station string ["place-mdftf", "place-mdftf", "place-mdftf", "place-mdftf", "place-river", ...]
+  scheduled_end_station string ["place-hsmnl", "place-hsmnl", "place-hsmnl", "place-hsmnl", "place-mdftf", ...]
+  scheduled_departure s64 [35040, 35460, 27720, 38940, 17760, ...]
+  scheduled_arrival s64 [38220, 38640, 30960, 42120, 21840, ...]
   actual_start_station string [nil, nil, nil, nil, nil, ...]
   actual_end_station string [nil, nil, nil, nil, nil, ...]
-  actual_departure s64 [nil, 18720, nil, 26040, nil, ...]
-  detected_departure s64 [18311, 18748, 21863, 26009, 29058, ...]
-  car0 string ["3663", "3837", "3837", "3833", "3833", ...]
-  car1 string ["3837", "3663", "3663", "3621", "3621", ...]
-  min_car string ["3663", "3663", "3663", "3621", "3621", ...]
-  max_car string ["3837", "3837", "3837", "3833", "3833", ...]
-  consist string ["3663-3837", "3663-3837", "3663-3837", "3621-3833", "3621-3833", ...]
-  trip_id string ["62921905", "62921906", "62921907", "62921908", "62921909", ...]
-  gtfs_active_date s32 [20240608, 20240608, 20240608, 20240608, 20240608, ...]
-  gtfs_end_date s32 [20240904, 20240904, 20240904, 20240904, 20240904, ...]
-  block_id string ["B800-53", "B800-53", "B800-53", "B800-53", "B800-53", ...]
-  departure_stop_id string ["70513", "70512", "70260", "70512", "70260", ...]
-  arrival_time s64 [18540, 21720, 25320, 29280, 33180, ...]
-  arrival_stop_id string ["70511", "70260", "70511", "70260", "70511", ...]
-  block_sequence s64 [1, 2, 3, 4, 5, ...]
+  actual_departure s64 [35400, 36000, 28020, 39240, 17940, ...]
+  detected_departure s64 [35410, 35776, 28162, 39282, 17980, ...]
+  car0 string ["3642", "3874", "3700", "3844", "3706", ...]
+  car1 string ["3880", "3660", "3887", "3692", "3814", ...]
+  service_dow s8 [1, 1, 1, 1, 1, ...]
+  min_car string ["3642", "3660", "3700", "3692", "3706", ...]
+  max_car string ["3880", "3874", "3887", "3844", "3814", ...]
+  consist string ["3642-3880", "3660-3874", "3700-3887", "3692-3844", "3706-3814", ...]
+  trip_id string ["65164974", "65164991", "65164990", "65165130", "65165293", ...]
+  service_id string ["LRV32024-hlb34bb1-Weekday-01", "LRV32024-hlb34bb1-Weekday-01", "LRV32024-hlb34bb1-Weekday-01", "LRV32024-hlb34bb1-Weekday-01", "LRV32024-hlb34bb1-Weekday-01", ...]
+  gtfs_active_date s64 [20240802, 20240802, 20240802, 20240802, 20240802, ...]
+  gtfs_end_date s64 [20240809, 20240809, 20240809, 20240809, 20240809, ...]
+  block_id string ["B800-56", "B800-57", "B800-57", "B800-65", "B800-33", ...]
+  departure_stop_id string ["70512", "70512", "70512", "70512", "70160", ...]
+  arrival_time s64 [38220, 38640, 30960, 42120, 21840, ...]
+  arrival_stop_id string ["70260", "70260", "70260", "70260", "70511", ...]
+  monday s64 [1, 1, 1, 1, 1, ...]
+  tuesday s64 [1, 1, 1, 1, 1, ...]
+  wednesday s64 [1, 1, 1, 1, 1, ...]
+  thursday s64 [1, 1, 1, 1, 1, ...]
+  friday s64 [1, 1, 1, 1, 1, ...]
+  saturday s64 [0, 0, 0, 0, 0, ...]
+  sunday s64 [0, 0, 0, 0, 0, ...]
+  start_date s64 [20240802, 20240802, 20240802, 20240802, 20240802, ...]
+  end_date s64 [20240809, 20240809, 20240809, 20240809, 20240809, ...]
+  block_sequence s64 [6, 6, 4, 6, 1, ...]
 >
 ```
 
 ```elixir
-
 df2
+|> DF.filter(consist != "-" and not is_nil(block_id))
+|> DF.group_by(:service_date)
+|> DF.summarise(block_count: S.n_distinct(block_id))
+|> DF.sort_by(asc: service_date)
+|> Kino.DataTable.new()
+```
+
+<!-- livebook:{"output":true} -->
+
+```text
+#Explorer.DataFrame<
+  Polars[31 x 2]
+  service_date s64 [20240801, 20240802, 20240803, 20240804, 20240805, ...]
+  block_count u32 [73, 73, 41, 38, 57, ...]
+>
+```
+
+```elixir
+df2
+|> DF.filter(consist != "-" and not is_nil(block_id))
 |> DF.group_by([:service_date, :block_id])
 |> DF.summarise(car_count: S.n_distinct(consist))
-|> DF.ungroup()
 |> DF.mutate(one_car: select(car_count < 2, 1, 0))
+# |> DF.ungroup([:block_id])
+# |> DF.summarise()
 |> DF.summarise(
   min: min(car_count),
   median: median(car_count),
@@ -389,20 +610,111 @@ df2
   one_car: sum(one_car)
 )
 |> DF.mutate(one_car_pct: 100 * one_car / size)
+|> Kino.DataTable.new()
 ```
 
 <!-- livebook:{"output":true} -->
 
-```
+```text
 #Explorer.DataFrame<
   Polars[1 x 6]
   min u32 [1]
   median f64 [6.0]
-  max u32 [14]
-  size u32 [2210]
-  one_car s64 [95]
-  one_car_pct f64 [4.298642533936651]
+  max u32 [12]
+  size u32 [1936]
+  one_car s64 [37]
+  one_car_pct f64 [1.9111570247933884]
 >
 ```
 
-<!-- livebook:{"offset":14524,"stamp":{"token":"XCP.dMHsQ2MHe6JP5h3ylPmWUmrEdZFSI4tjHg2GZTjdK6OwdtbT366YHQNnBQZr0aCzX0uCUCHdDcuyqpDPuSp08WqDf8_vWS3qyVeK3g","version":2}} -->
+```elixir
+df2
+|> DF.sort_by(asc: service_date, asc: block_id, asc: block_sequence)
+|> DF.group_by([:service_date, :block_id])
+|> DF.filter(block_id == "B800-50" and service_date == 20_240_801)
+|> Kino.DataTable.new()
+```
+
+<!-- livebook:{"output":true} -->
+
+```text
+#Explorer.DataFrame<
+  Polars[16 x 34]
+  Groups: ["service_date", "block_id"]
+  service_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
+  scheduled_trip_id string ["alb34011-rsmnl-unsqu-0445", "alb34011-unsqu-river-0543", "alb34011-river-unsqu-0707", "alb34011-unsqu-river-0825", "alb34011-river-unsqu-0944", ...]
+  scheduled_start_station string ["place-rsmnl", "place-unsqu", "place-river", "place-unsqu", "place-river", ...]
+  scheduled_end_station string ["place-unsqu", "place-river", "place-unsqu", "place-river", "place-unsqu", ...]
+  scheduled_departure s64 [17100, 20580, 25620, 30300, 35040, ...]
+  scheduled_arrival s64 [19740, 24360, 29460, 34260, 38820, ...]
+  actual_start_station string [nil, nil, nil, nil, nil, ...]
+  actual_end_station string [nil, nil, nil, nil, nil, ...]
+  actual_departure s64 [nil, nil, nil, 29100, 35160, ...]
+  detected_departure s64 [nil, nil, nil, 29258, nil, ...]
+  car0 string [nil, nil, nil, "3851", "3860", ...]
+  car1 string [nil, nil, nil, "3645", "3601", ...]
+  service_dow s8 [4, 4, 4, 4, 4, ...]
+  min_car string [nil, nil, nil, "3645", "3601", ...]
+  max_car string [nil, nil, nil, "3851", "3860", ...]
+  consist string ["-", "-", "-", "3645-3851", "3601-3860", ...]
+  trip_id string ["62922252", "62922253", "62922254", "62922255", "62922256", ...]
+  service_id string ["LRV32024-hlb34011-Weekday-01", "LRV32024-hlb34011-Weekday-01", "LRV32024-hlb34011-Weekday-01", "LRV32024-hlb34011-Weekday-01", "LRV32024-hlb34011-Weekday-01", ...]
+  gtfs_active_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
+  gtfs_end_date s64 [20240802, 20240802, 20240802, 20240802, 20240802, ...]
+  block_id string ["B800-50", "B800-50", "B800-50", "B800-50", "B800-50", ...]
+  departure_stop_id string ["70174", "70504", "70160", "70504", "70160", ...]
+  arrival_time s64 [19740, 24360, 29460, 34260, 38820, ...]
+  arrival_stop_id string ["70503", "70161", "70503", "70161", "70503", ...]
+  monday s64 [1, 1, 1, 1, 1, ...]
+  tuesday s64 [1, 1, 1, 1, 1, ...]
+  wednesday s64 [1, 1, 1, 1, 1, ...]
+  thursday s64 [1, 1, 1, 1, 1, ...]
+  friday s64 [1, 1, 1, 1, 1, ...]
+  saturday s64 [0, 0, 0, 0, 0, ...]
+  sunday s64 [0, 0, 0, 0, 0, ...]
+  start_date s64 [20240801, 20240801, 20240801, 20240801, 20240801, ...]
+  end_date s64 [20240802, 20240802, 20240802, 20240802, 20240802, ...]
+  block_sequence s64 [1, 2, 3, 4, 5, ...]
+>
+```
+
+```elixir
+df2
+|> DF.filter(block_sequence > 1)
+|> DF.mutate(previous_block_sequence: block_sequence - 1)
+|> DF.join(df2,
+  on: [:service_date, :block_id, previous_block_sequence: :block_sequence],
+  how: :left
+)
+|> DF.select([
+  :service_date,
+  :block_id,
+  :trip_id,
+  :arrival_time,
+  :consist,
+  :block_sequence,
+  :trip_id_right,
+  :consist_right,
+  :arrival_time_right,
+  :previous_block_sequence
+])
+|> DF.sort_by(asc: service_date, asc: block_id, asc: block_sequence)
+# |> DF.filter(service_date == 20240801 and block_id=="B800-50")
+|> DF.mutate(same_consist?: select(consist != "-" and consist == consist_right, 1, 0))
+|> DF.summarise(count: count(same_consist?), same_consist: sum(same_consist?))
+|> DF.mutate(same_consist_pct: 100 * (same_consist / count))
+|> Kino.DataTable.new()
+```
+
+<!-- livebook:{"output":true} -->
+
+```text
+#Explorer.DataFrame<
+  Polars[1 x 3]
+  count u32 [41129]
+  same_consist s64 [25300]
+  same_consist_pct f64 [61.51377373629313]
+>
+```
+
+<!-- livebook:{"offset":27175,"stamp":{"token":"XCP.1B8-_xK5SJs03JhPsOnr8hnMVQxKBrmpgsFEczHzsFD8nB_IJsKGn5JXz_I2t7mOjm5zTMIoSVbCOkBrYuUq1tFGE8FjChlGjfd0Og","version":2}} -->
