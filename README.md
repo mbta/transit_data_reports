@@ -8,14 +8,22 @@ This repository provides a common place to store
 ## Setup
 
 1. Clone or download this repository.
-2. Install Livebook, either through Poetry or the desktop app. (Desktop app
+2. If you're on a Mac and haven't already installed XCode Command Line Tools (developers almost certainly have), do so now.
+   <details>
+      <summary>Click for instructions</summary>
+
+      1. Open the Terminal app: press <kbd>⌘</kbd>+<kbd>space</kbd> and type "terminal", then hit enter.
+      2. Type the following in your terminal: `xcode-select --install`. Hit enter.
+      3. [Follow the ensuing setup steps.](https://www.junian.net/dev/xcode-command-line-tools-installation-faq/)
+   </details>
+3. Install Livebook, either through Poetry or the desktop app. (Desktop app
    recommended)
-3. Create a Hub (or rename the default) to contain all of the MBTA / Transit
+4. Open Livebook. Create a Hub (or rename the default) to contain all of the MBTA / Transit
    Data reports.
-4. Add the report(s) you wish to run to a Hub.\
+5. Add the report(s) you wish to run to a Hub.\
    Make sure to open them _in situ_—they need to be located in the reports/
    directory for certain code to work properly.
-5. Add secret(s) to the Hub.
+6. Add secret(s) to the Hub.
 
 ## Secrets
 
