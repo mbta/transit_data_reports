@@ -484,6 +484,8 @@ Methodology:
 [^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
 
 ```elixir
+service_day = to_string(DateTime.to_date(loader_settings.start_dt))
+
 times_table =
   0..23
   # Service day starts at 4am, so let's start the table at that hour.
@@ -502,6 +504,7 @@ times_table =
     time_percentage = Map.fetch!(predicted_time_percentages_by_hour, hour)
 
     [
+      {"service day", service_day},
       {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
       {"# of predicted departure times", predicted_time_count},
       {"# of actual departure times", actual_time_count},
@@ -527,6 +530,7 @@ trips_table =
     trip_percentage = Map.fetch!(predicted_trip_percentages_by_hour, hour)
 
     [
+      {"service day", service_day},
       {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
       {"# of predicted departures collapsed by trip", predicted_trip_count},
       {"# of actual departures collapsed by trip", actual_trip_count},
@@ -569,4 +573,4 @@ Kino.Download.new(
 Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":19407,"stamp":{"token":"XCP.0bc84sDOs5zFXN5CwioIeyNlJgq8iWyBmTe574h5aUXCdsggE9YZVu9e2PY8pXpmkR8dAJL95hzDVG1MqEm6nEsYC4JFDE0J9V_OhNxRqfQpvLV-ylIt1h9-E-w42XMA2pUxbUtbAIyN3tWLx1KvxZgOnUD_wQ","version":2}} -->
+<!-- livebook:{"offset":19548,"stamp":{"token":"XCP.8wXfnjG3OwLWdHkIqgCBVvU2PbNrOAp6Rh1LIFf7ZfZE7Rb0k5gWU6ejeNm-pc3xn9hrSzzMvZQewgWo-J5dxdCx6LsUaD9PQoVdbpnieONbzcPoYPHSl9Ti8Ofu1Expg9REdqYycixfkK3mZEciOtyhd70URw","version":2}} -->

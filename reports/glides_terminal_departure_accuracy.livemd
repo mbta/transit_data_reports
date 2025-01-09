@@ -499,6 +499,8 @@ Methodology:
 [^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
 
 ```elixir
+service_day = to_string(DateTime.to_date(loader_settings.start_dt))
+
 table =
   0..23
   # Service day starts at 4am, so let's start the table at that hour.
@@ -543,6 +545,7 @@ table =
       end)
 
     [
+      {"service day", service_day},
       {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
       {"# predictions", predicted_departure_time_count},
       {"# departures", actual_departure_time_count}
@@ -600,4 +603,4 @@ VegaLite.new(width: 500, height: 300, title: "Percent accurate by bucket size")
 |> VegaLite.encode_field(:y, "Accuracy (% of total predictions)", type: :quantitative)
 ```
 
-<!-- livebook:{"offset":20788,"stamp":{"token":"XCP.v-Vmiri-1qFf7hWBFEpvcszBFXQZQX1vPvzAn98g7DRUwZmh3rjuiTxseJggpriZzee8HKpf2-TX3FGHpXyrk_0oJaFHlsMiBbWm6YsrmoiuqRnfTQfT1Zk-Neb7r-WQ0wxJb8VWMe9eKfus2zjEdFKx3wf6ew","version":2}} -->
+<!-- livebook:{"offset":20893,"stamp":{"token":"XCP.A70KVOKAkVwBx_zTEdFYkHVmmpsin6o7Gzgi81fw9vT80bNMOOswIoTrmMo--hxe1x8k1yx637r-jibJDIq2ZAo7dXDfi_t6t1hGvQRnNStUGsdKpaBQOzErKCjFXWlFg9aejTGv0uZD1YcZC32zBxRmmdGmtw","version":2}} -->
