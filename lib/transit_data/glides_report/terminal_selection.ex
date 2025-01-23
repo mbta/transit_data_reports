@@ -6,6 +6,7 @@ defmodule TransitData.GlidesReport.TerminalSelection do
   use Kino.JS, assets_path: "lib/assets/terminal_selection"
   use Kino.JS.Live
 
+  alias Kino.JS.Live, as: LiveKino
   alias TransitData.GlidesReport.Terminal
 
   # Collections are stored as lists of tuples, to preserve order of inputs.
@@ -20,7 +21,7 @@ defmodule TransitData.GlidesReport.TerminalSelection do
   @spec new(
           Enumerable.t({Terminal.id(), String.t()}),
           Enumerable.t({String.t(), String.t(), Enumerable.t(Terminal.id())})
-        ) :: Kino.JS.Live.t()
+        ) :: LiveKino.t()
   def new(terminals, groups \\ []) do
     terminals =
       for {id, label} <- terminals do
@@ -38,7 +39,7 @@ defmodule TransitData.GlidesReport.TerminalSelection do
 
     assigns = %{terminals: terminals, groups: groups}
 
-    Kino.JS.Live.new(__MODULE__, assigns)
+    LiveKino.new(__MODULE__, assigns)
   end
 
   defp validate!(terminals, groups) do
@@ -63,17 +64,17 @@ defmodule TransitData.GlidesReport.TerminalSelection do
     end
   end
 
-  @spec toggle_terminal(Kino.JS.Live.t(), Terminal.id()) :: :ok
+  @spec toggle_terminal(LiveKino.t(), Terminal.id()) :: :ok
   def toggle_terminal(kino, id) do
-    Kino.JS.Live.cast(kino, {:toggle_terminal, id})
+    LiveKino.cast(kino, {:toggle_terminal, id})
   end
 
   def toggle_group(kino, id) do
-    Kino.JS.Live.cast(kino, {:toggle_group, id})
+    LiveKino.cast(kino, {:toggle_group, id})
   end
 
   def get_checked_terminals(kino) do
-    Kino.JS.Live.call(kino, :get_checked_terminals)
+    LiveKino.call(kino, :get_checked_terminals)
   end
 
   @impl true
