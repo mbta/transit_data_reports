@@ -6,6 +6,7 @@ defmodule TransitData.GlidesReport.Spec.VehiclePosition do
   """
 
   alias TransitData.GlidesReport.Spec.Common
+  alias TransitData.GlidesReport.Terminal
 
   @type t :: {key, value}
 
@@ -19,9 +20,9 @@ defmodule TransitData.GlidesReport.Spec.VehiclePosition do
             # "IN_TRANSIT_TO" | "STOPPED_AT" | "INCOMING_AT"
             current_status: String.t(),
             # A child stop ID initially, but we convert it to the
-            # parent stop ID of the relevant terminal by calling
+            # ID of the relevant terminal by calling
             # GlidesReport.VehiclePosition.normalize_stop_id/1 on it.
-            stop_id: Common.stop_id(),
+            terminal_id: Terminal.id(),
             timestamp: Common.timestamp(),
             trip: %{
               trip_id: Common.trip_id()

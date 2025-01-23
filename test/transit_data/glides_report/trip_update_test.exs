@@ -80,27 +80,34 @@ defmodule TransitData.GlidesReport.TripUpdateTest do
   end
 
   describe "normalize_stop_ids/1" do
-    property "converts child stop IDs to parent stop IDs" do
+    property "converts child stop IDs to terminal IDs" do
       check all(tr_upd <- Gen.relevant_trip_update_generator()) do
         normalized = normalize(tr_upd)
-        Enum.each(normalized.trip_update.stop_time_update, &assert("place-" <> _ = &1.stop_id))
+
+        Enum.each(
+          normalized.trip_update.stop_time_update,
+          fn stop_time -> assert {:terminal, "place-" <> _} = stop_time.terminal_id end
+        )
       end
     end
   end
 
-  describe "filter_stops/2" do
-    property "removes stops not in the filter list, returns nil if all stops are filtered" do
+  describe "filter_terminals/2" do
+    property "removes terminals not in the filter list, returns nil if all terminals are filtered" do
       check all(tr_upd <- Gen.relevant_trip_update_generator()) do
         normalized = normalize(tr_upd)
-        filtered = TripUpdate.filter_stops(normalized, ["place-river"])
+        filtered = TripUpdate.filter_terminals(normalized, [{:terminal, "place-river"}])
 
-        if "place-river" in get_in(normalized, [
+        if {:terminal, "place-river"} in get_in(normalized, [
              :trip_update,
              :stop_time_update,
              Access.all(),
-             :stop_id
+             :terminal_id
            ]) do
-          Enum.each(filtered.trip_update.stop_time_update, &assert(&1.stop_id == "place-river"))
+          Enum.each(
+            filtered.trip_update.stop_time_update,
+            &assert(&1.terminal_id == {:terminal, "place-river"})
+          )
         else
           assert is_nil(filtered)
         end

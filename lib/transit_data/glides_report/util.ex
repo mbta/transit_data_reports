@@ -3,7 +3,7 @@ defmodule TransitData.GlidesReport.Util do
   Miscellaneous utility functions for the report.
   """
 
-  alias TransitData.GlidesReport
+  alias TransitData.GlidesReport.Terminal
 
   @doc """
   Streams all values from an ETS table.
@@ -151,9 +151,6 @@ defmodule TransitData.GlidesReport.Util do
     |> Enum.join()
   end
 
-  @stop_filters GlidesReport.Terminals.all_labeled_stops_and_groups()
-  defp stop_filters, do: @stop_filters
-
   def build_csv_name(table_name, loader_settings, filter_settings) do
     %{
       env_suffix: env_suffix,
@@ -164,7 +161,7 @@ defmodule TransitData.GlidesReport.Util do
     } = loader_settings
 
     %{
-      stop_ids: stop_ids,
+      terminal_ids: terminal_ids,
       limit_to_next_2_predictions: limit_to_next_2_predictions
     } = filter_settings
 
@@ -178,22 +175,27 @@ defmodule TransitData.GlidesReport.Util do
         &(&1 |> DateTime.shift_zone!("America/New_York") |> Calendar.strftime("%xT%H:%M"))
       )
 
-    stop_filter =
-      Enum.find_value(stop_filters(), fn {parent_ids_set, label} ->
-        if MapSet.equal?(parent_ids_set, stop_ids), do: label
+    terminals_filter =
+      Enum.find_value(Terminal.labeled_terminal_groups(), fn {_id, label, terminals_in_group} ->
+        if MapSet.equal?(terminals_in_group, terminal_ids), do: label
       end)
 
-    true = not is_nil(stop_filter)
+    terminals_filter =
+      if terminals_filter do
+        terminals_filter
+      else
+        terminal_to_name = Map.new(Terminal.labeled_terminals())
+        Enum.map_join(terminal_ids, ",", &Map.fetch!(terminal_to_name, &1))
+      end
 
     sample_count = if sample_count == :all, do: "ALL", else: sample_count
 
     sampling = "sampling=#{sample_count}per#{sample_rate}min"
 
+    terminals = "terminals=#{terminals_filter}"
+
     optionals =
-      [
-        {stop_ids, "stops=#{stop_filter}"},
-        {limit_to_next_2_predictions, "next 2 predictions only"}
-      ]
+      [{limit_to_next_2_predictions, "next 2 predictions only"}]
       |> Enum.filter(&elem(&1, 0))
       |> Enum.map_join(",", &elem(&1, 1))
       |> case do
@@ -201,6 +203,6 @@ defmodule TransitData.GlidesReport.Util do
         str -> ",#{str}"
       end
 
-    "Glides report - #{table_name} - #{env},#{dt_range}#{optionals},#{sampling}.csv"
+    "Glides report - #{table_name} - #{env},#{dt_range},#{terminals}#{optionals},#{sampling}.csv"
   end
 end

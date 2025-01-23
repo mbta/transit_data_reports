@@ -19,7 +19,7 @@ defmodule TransitData.GlidesReport.VehiclePosition do
              is_binary(stop_id) and
              is_binary(trip_id) and
              current_status in ["IN_TRANSIT_TO", "INCOMING_AT"] do
-    if stop_id in GlidesReport.Terminals.all_next_stops() do
+    if stop_id in GlidesReport.Terminal.all_next_stops() do
       ve_pos
       |> update_in(["vehicle", "trip"], &Map.take(&1, ["trip_id"]))
       |> update_in(
@@ -37,8 +37,12 @@ defmodule TransitData.GlidesReport.VehiclePosition do
   def normalize_stop_id(ve_pos) do
     update_in(
       ve_pos,
-      [:vehicle, :stop_id],
-      &GlidesReport.Terminals.normalize_stop_id/1
+      [:vehicle],
+      fn vehicle ->
+        vehicle
+        |> Map.put(:terminal_id, GlidesReport.Terminal.normalize_stop_id(vehicle.stop_id))
+        |> Map.delete(:stop_id)
+      end
     )
   end
 
@@ -49,7 +53,7 @@ defmodule TransitData.GlidesReport.VehiclePosition do
   # traveling from Riverside to Woodland. In that case, this fn chooses the earlier of the two.
   def dedup_statuses(vehicle_positions) do
     vehicle_positions
-    |> Enum.group_by(&{&1.vehicle.trip.trip_id, &1.vehicle.stop_id, &1.id})
+    |> Enum.group_by(&{&1.vehicle.trip.trip_id, &1.vehicle.terminal_id, &1.id})
     |> Stream.map(fn {_key, ve_positions} ->
       Enum.min_by(ve_positions, & &1.vehicle.timestamp)
     end)

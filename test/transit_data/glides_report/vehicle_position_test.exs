@@ -62,7 +62,7 @@ defmodule TransitData.GlidesReport.VehiclePositionTest do
     property "converts child stop ID to parent stop ID" do
       check all(ve_pos <- Gen.relevant_vehicle_position_generator()) do
         normalized = normalize(ve_pos)
-        assert "place-" <> _ = normalized.vehicle.stop_id
+        assert {:terminal, "place-" <> _} = normalized.vehicle.terminal_id
       end
     end
   end
@@ -79,7 +79,7 @@ defmodule TransitData.GlidesReport.VehiclePositionTest do
         |> Enum.take(50)
 
       trip_id = "a unique trip id"
-      stop_id = "a unique stop id"
+      terminal_id = {:terminal, "a unique terminal id"}
       vehicle_id = "a unique vehicle id"
 
       dups =
@@ -88,7 +88,7 @@ defmodule TransitData.GlidesReport.VehiclePositionTest do
           ve_pos
           |> normalize()
           |> put_in([:vehicle, :trip, :trip_id], trip_id)
-          |> put_in([:vehicle, :stop_id], stop_id)
+          |> put_in([:vehicle, :terminal_id], terminal_id)
           |> put_in([:id], vehicle_id)
         end)
         |> Enum.take(3)
@@ -110,7 +110,7 @@ defmodule TransitData.GlidesReport.VehiclePositionTest do
         matches =
           Enum.filter(
             deduped,
-            &(&1.vehicle.trip.trip_id == trip_id and &1.vehicle.stop_id == stop_id and
+            &(&1.vehicle.trip.trip_id == trip_id and &1.vehicle.terminal_id == terminal_id and
                 &1.id == vehicle_id)
           )
 

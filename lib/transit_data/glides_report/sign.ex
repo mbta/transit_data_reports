@@ -1,5 +1,5 @@
 defmodule TransitData.GlidesReport.Sign do
-  @moduledoc "Simulates a countdown clock at one platform (child stop ID)."
+  @moduledoc "Simulates a countdown clock at one terminal."
 
   @type t :: %__MODULE__{
           predictions: list({trip_id :: String.t(), departure_time :: integer}),
