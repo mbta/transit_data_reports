@@ -577,4 +577,4 @@ Kino.Download.new(
 Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":20661,"stamp":{"token":"XCP.g8wQ9Pi8TpwYMoQkhpgpwu2fmjaK4Fg_1bFVYI3u4xM8c_1CyzcsH9acLCewgwiZBesmpYkEm--nYK6ZsRZS7yrZwMI7pbx31qtR-u8QcXn46tuRkXmxb4MHMPETL7VzyowSeDy4JrWiSo-utI2wBtVL-VDefg","version":2}} -->
+<!-- livebook:{"offset":20596,"stamp":{"token":"XCP.BKAK1tf_QQVOx2dteyKPez26YgEHm2TDMrZnbkcniLftlVgYcymLsMpyjkCTUuEQ3N92MnXOfyzr3JwyfsVGVZkYlb_sJI9nGeloOL7bCSl4rwCLx1DIY_tok0KeV7j9aw6VBZRjDXxCHHnK8LIoXB8PT2owOQ","version":2}} -->

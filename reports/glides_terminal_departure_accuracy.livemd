@@ -602,4 +602,4 @@ VegaLite.new(width: 500, height: 300, title: "Percent accurate by bucket size")
 |> VegaLite.encode_field(:y, "Accuracy (% of total predictions)", type: :quantitative)
 ```
 
-<!-- livebook:{"offset":21555,"stamp":{"token":"XCP.We0bijvY-0Ug8yrAAgCh6uBBgVRZxyrsLv3Xp1SyE65asg072_f-qRGaxhHT6gISOClUFZIzzWxaUDyhLDs8YaYBJgqxqgLNsDF6ylT_cZTRjkwiZwN9N8wK1TOtoPxN5CF4oF7_yhNXp2_ugTxCU3Tikz_E_w","version":2}} -->
+<!-- livebook:{"offset":21272,"stamp":{"token":"XCP.A6M4_0Z2WgE__SvOUi1yb-RfpJFx-22byZBct39evzAb_2hNZHHRf0cu0msHW-gfGiaSAqtjQjT3uEVttN6uSqB9Acr2wzXAxhw2oI9OVF1JFrPPhS6MrGTvuUzLfx2Sm9Cdb0oeldB2HEy3c-L3VaS4d02frw","version":2}} -->
