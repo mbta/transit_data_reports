@@ -283,15 +283,15 @@ Kino.nothing()
 ### 👉 Now, choose how you want to filter the data.
 
 ```elixir
-stop_ids_input =
-  Kino.Input.select("Stop(s)", GlidesReport.Terminals.all_labeled_stops_and_groups())
+{terminals, stop_groups} = GlidesReport.Terminal.all_labeled_terminals_and_groups()
+terminal_ids_input = GlidesReport.TerminalSelection.new(terminals, stop_groups)
 
 limit_to_next_2_predictions_input = Kino.Input.checkbox("Simulate countdown clocks?")
 
 min_advance_notice_input = Kino.Input.number("Minimum advance notice (seconds)")
 
 [
-  stop_ids_input,
+  terminal_ids_input,
   limit_to_next_2_predictions_input,
   min_advance_notice_input
 ]
@@ -302,7 +302,7 @@ min_advance_notice_input = Kino.Input.number("Minimum advance notice (seconds)")
 
 | Setting                          | Details                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stop(s)                          | Only analyze data concerning a specific stop, or group of stops.<br/><br/>**Note: Terminals that do not have Glides predictions—Heath Street and Ashmont—are ignored regardless of which stop(s) you select.**                                                                                                                      |
+| Stop(s)                          | Only analyze data concerning a specific terminal stop, or a group of terminal stops.                                                                                                                                                                                                                                                    |
 | Simulate countdown clocks?       | Only consider predictions that would have appeared on countdown clocks—those that were in the next 2 predictions for a stop at some point.                                                                                                                                                                                            |
 | Minimum advance notice (seconds) | Only consider predictions created at least this many seconds in advance of the departure time they predict.<br/><br/>For example: If this were set to `60`, then a prediction generated at 12:00:00, with departure time predicted for 12:00:59, would be omitted from analysis.<br/><br/>Leave the field blank to disable this filter. |
 
@@ -311,9 +311,13 @@ min_advance_notice_input = Kino.Input.number("Minimum advance notice (seconds)")
 Read inputs.
 
 ```elixir
+if Enum.empty?(GlidesReport.TerminalSelection.get_checked_terminals(terminal_ids_input)) do
+  Kino.interrupt!(:error, "Please select at least one stop.")
+end
+
 filter_settings =
   GlidesReport.Settings.Filter.new(
-    Kino.Input.read(stop_ids_input),
+    GlidesReport.TerminalSelection.get_checked_terminals(terminal_ids_input),
     Kino.Input.read(limit_to_next_2_predictions_input),
     Kino.Input.read(min_advance_notice_input)
   )
@@ -328,7 +332,7 @@ alias TransitData.GlidesReport.Departure
 
 top_twos =
   if filter_settings.limit_to_next_2_predictions do
-    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.stop_ids)
+    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.terminal_ids)
   else
     nil
   end
@@ -339,7 +343,7 @@ trip_updates =
   |> Stream.map(&GlidesReport.TripUpdate.normalize_stop_ids/1)
   # Filter each trip update's stop_time_update list.
   # If filtered list is empty for any trip update, the trip update is removed entirely.
-  |> Stream.map(&GlidesReport.TripUpdate.filter_stops(&1, filter_settings.stop_ids))
+  |> Stream.map(&GlidesReport.TripUpdate.filter_terminals(&1, filter_settings.terminal_ids))
   |> Stream.reject(&is_nil/1)
   |> Stream.map(
     &GlidesReport.TripUpdate.filter_by_advance_notice(&1, filter_settings.min_advance_notice_sec)
@@ -351,13 +355,13 @@ trip_updates =
   |> Stream.flat_map(fn tr_upd ->
     Enum.map(
       tr_upd.trip_update.stop_time_update,
-      &Departure.new(tr_upd.trip_update.trip.trip_id, &1.stop_id, &1.departure.time)
+      &Departure.new(tr_upd.trip_update.trip.trip_id, &1.terminal_id, &1.departure.time)
     )
   end)
   # Apply the "appeared on countdown clocks" filter, if it's enabled.
   |> then(fn stream ->
     if not is_nil(top_twos) do
-      Stream.filter(stream, &({&1.stop, &1.timestamp} in top_twos))
+      Stream.filter(stream, &({&1.terminal, &1.timestamp} in top_twos))
     else
       stream
     end
@@ -374,9 +378,9 @@ vehicle_positions =
   :VehiclePositions
   |> GlidesReport.Util.stream_values()
   |> Stream.map(&GlidesReport.VehiclePosition.normalize_stop_id/1)
-  |> Stream.filter(&(&1.vehicle.stop_id in filter_settings.stop_ids))
+  |> Stream.filter(&(&1.vehicle.terminal_id in filter_settings.terminal_ids))
   |> GlidesReport.VehiclePosition.dedup_statuses()
-  |> Stream.map(&Departure.new(&1.vehicle.trip.trip_id, &1.vehicle.stop_id, &1.vehicle.timestamp))
+  |> Stream.map(&Departure.new(&1.vehicle.trip.trip_id, &1.vehicle.terminal_id, &1.vehicle.timestamp))
   |> Enum.to_list()
 
 Kino.nothing()
@@ -393,7 +397,7 @@ variances = [1, 2, 3, 5, 10]
 
 # %{
 #   variance => %{
-#     stop_id => [actual_departure_range1, actual_departure_range2, ...]
+#     terminal_id => [actual_departure_range1, actual_departure_range2, ...]
 #   }
 # }
 actual_departure_windows_by_variance =
@@ -401,19 +405,19 @@ actual_departure_windows_by_variance =
     # Convert to seconds, to match up with vehicle.timestamp
     variance_sec = variance * 60
 
-    time_ranges_by_stop_id =
+    time_ranges_by_terminal_id =
       vehicle_positions
-      |> Enum.group_by(&(&1.stop), &(&1.timestamp))
-      |> Map.new(fn {stop_id, timestamps} ->
+      |> Enum.group_by(&(&1.terminal), &(&1.timestamp))
+      |> Map.new(fn {terminal_id, timestamps} ->
         time_ranges =
           timestamps
           |> Enum.map(fn t -> (t - variance_sec)..(t + variance_sec)//1 end)
           |> GlidesReport.Util.merge_ranges()
 
-        {stop_id, time_ranges}
+        {terminal_id, time_ranges}
       end)
 
-    {variance, time_ranges_by_stop_id}
+    {variance, time_ranges_by_terminal_id}
   end)
 
 # %{
@@ -422,18 +426,17 @@ actual_departure_windows_by_variance =
 accurate_predictions_by_variance =
   Map.new(variances, fn variance ->
     # lookup the actuals
-    accuracy_windows_by_stop = Map.fetch!(actual_departure_windows_by_variance, variance)
+    accuracy_windows_by_terminal = Map.fetch!(actual_departure_windows_by_variance, variance)
 
     accurate_predictions =
       trip_updates
       |> Enum.filter(fn departure ->
-        accuracy_windows_by_stop
-        |> Map.get(departure.stop, [])
+        accuracy_windows_by_terminal
+        |> Map.get(departure.terminal, [])
         |> Enum.any?(fn window -> departure.timestamp in window end)
       end)
-      |> MapSet.new()
 
-    {variance, accurate_predictions}
+      {variance, MapSet.new(accurate_predictions)}
   end)
 
 ###########################
@@ -450,11 +453,7 @@ departures_by_hour =
   |> Map.new(fn {k, l} -> {k, MapSet.new(l)} end)
 
 # %{
-#   hour => %{
-#     %{
-#       variance => MapSet.t(Departure.t())
-#     }
-#   }
+#   hour => %{ variance => MapSet.t(Departure.t()) }
 # }
 accurate_predictions_by_variance_by_hour =
   accurate_predictions_by_variance
@@ -489,14 +488,14 @@ Kino.nothing()
 
 Methodology:
 
-* From VehiclePositions, get all timestamps (truncated to minute) at which a vehicle actually departed a stop.[^1]
-* From TripUpdates, get all timestamps (truncated to minute) at which a vehicle was predicted to depart a stop.[^2]
-* If a predicted departure time was within some number of minutes from the actual departure time at the same stop, then that prediction is considered accurate. Each prediction is evaluated for accuracy under a number of different minute ranges: 1, 2, 3, 5, and 10 minutes.
+* From VehiclePositions, get all timestamps (truncated to minute) at which a vehicle actually departed a terminal.[^1]
+* From TripUpdates, get all timestamps (truncated to minute) at which a vehicle was predicted to depart a terminal.[^2]
+* If a predicted departure time was within some number of minutes from the actual departure time at the same terminal, then that prediction is considered accurate. Each prediction is evaluated for accuracy under a number of different minute ranges: 1, 2, 3, 5, and 10 minutes.
 
 ---
 
-[^1]: There is no "departing stop" vehicle status, so we look for events where the vehicle is "IN_TRANSIT_TO" or "INCOMING_AT" the stop _after_ the target stop.
-[^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
+[^1]: There is no "departing stop" vehicle status, so we look for events where the vehicle is "IN_TRANSIT_TO" or "INCOMING_AT" the stop _after_ the terminal. E.g. INCOMING_AT Green Street from Forest Hills.
+[^2]: This is the set of _all_ times at which a vehicle was predicted to depart a terminal. If at any moment, even just for a minute, a vehicle was predicted to depart terminal S at time T, then that `{time, terminal}` pair is added to the set.
 
 ```elixir
 service_day = to_string(DateTime.to_date(loader_settings.start_dt))
@@ -565,7 +564,7 @@ Kino.DataTable.new(table, name: table_name)
 ```
 
 ```elixir
-overall_prediction_count = Enum.count(trip_updates)
+overall_prediction_count = MapSet.size(MapSet.new(trip_updates))
 
 accuracy_percentages_by_variance =
   variances
@@ -603,4 +602,4 @@ VegaLite.new(width: 500, height: 300, title: "Percent accurate by bucket size")
 |> VegaLite.encode_field(:y, "Accuracy (% of total predictions)", type: :quantitative)
 ```
 
-<!-- livebook:{"offset":20893,"stamp":{"token":"XCP.A70KVOKAkVwBx_zTEdFYkHVmmpsin6o7Gzgi81fw9vT80bNMOOswIoTrmMo--hxe1x8k1yx637r-jibJDIq2ZAo7dXDfi_t6t1hGvQRnNStUGsdKpaBQOzErKCjFXWlFg9aejTGv0uZD1YcZC32zBxRmmdGmtw","version":2}} -->
+<!-- livebook:{"offset":21555,"stamp":{"token":"XCP.We0bijvY-0Ug8yrAAgCh6uBBgVRZxyrsLv3Xp1SyE65asg072_f-qRGaxhHT6gISOClUFZIzzWxaUDyhLDs8YaYBJgqxqgLNsDF6ylT_cZTRjkwiZwN9N8wK1TOtoPxN5CF4oF7_yhNXp2_ugTxCU3Tikz_E_w","version":2}} -->
