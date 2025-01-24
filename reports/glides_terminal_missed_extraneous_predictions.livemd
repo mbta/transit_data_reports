@@ -286,15 +286,15 @@ Kino.nothing()
 ### 👉 Now, choose how you want to filter the data.
 
 ```elixir
-stop_ids_input =
-  Kino.Input.select("Stop(s)", GlidesReport.Terminals.all_labeled_stops_and_groups())
+{terminals, groups} = GlidesReport.Terminal.all_labeled_terminals_and_groups()
+terminal_ids_input = TransitData.GlidesReport.TerminalSelection.new(terminals, groups)
 
 limit_to_next_2_predictions_input = Kino.Input.checkbox("Simulate countdown clocks?")
 
 min_advance_notice_input = Kino.Input.number("Minimum advance notice (seconds)")
 
 [
-  stop_ids_input,
+  terminal_ids_input,
   limit_to_next_2_predictions_input,
   min_advance_notice_input
 ]
@@ -303,20 +303,24 @@ min_advance_notice_input = Kino.Input.number("Minimum advance notice (seconds)")
 
 ### Setting Details
 
-| Setting                          | Details                                                                                                                                                                                                                                                                                                                                 |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stop(s)                          | Only analyze data concerning a specific stop, or group of stops.<br/><br/>**Note: Terminals that do not have Glides predictions—Heath Street and Ashmont—are ignored regardless of which stop(s) you select.**                                                                                                                      |
-| Simulate countdown clocks?       | Only consider predictions that would have appeared on countdown clocks—those that were in the next 2 predictions for a stop at some point.                                                                                                                                                                                            |
-| Minimum advance notice (seconds) | Only consider predictions created at least this many seconds in advance of the departure time they predict.<br/><br/>For example: If this were set to `60`, then a prediction generated at 12:00:00, with departure time predicted for 12:00:59, would be omitted from analysis.<br/><br/>Leave the field blank to disable this filter. |
+| Setting                          | Details                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop(s)                          | Only analyze data concerning a specific stop, or group of stops.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Simulate countdown clocks?       | Only consider predictions that would have appeared on countdown clocks—those that were in the next 2 predictions for a stop at some point.                                                                                                                                                                                                                                                                                                                                     |
+| Minimum advance notice (seconds) | Only consider predictions created **at least** this many seconds in advance of the departure time they predict.<br/><br/>For example: If this were set to `60`, then:<ul><li>a prediction generated at 12:00:00, with departure time predicted for 12:00:30, would be **omitted** from analysis.</li><li>A prediction generated at 12:00:00 with departure time predicted for 12:01:00 would be **included** in analysis.</li></ul>Leave the field blank to disable this filter. |
 
 <!-- livebook:{"break_markdown":true} -->
 
 Read inputs.
 
 ```elixir
+if Enum.empty?(GlidesReport.TerminalSelection.get_checked_terminals(terminal_ids_input)) do
+  Kino.interrupt!(:error, "Please select at least one stop.")
+end
+
 filter_settings =
   GlidesReport.Settings.Filter.new(
-    Kino.Input.read(stop_ids_input),
+    TransitData.GlidesReport.TerminalSelection.get_checked_terminals(terminal_ids_input),
     Kino.Input.read(limit_to_next_2_predictions_input),
     Kino.Input.read(min_advance_notice_input)
   )
@@ -331,7 +335,7 @@ alias TransitData.GlidesReport.Departure
 
 top_twos =
   if filter_settings.limit_to_next_2_predictions do
-    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.stop_ids)
+    GlidesReport.CountdownClocksSimulation.get_all_top_two_times(filter_settings.terminal_ids)
   else
     nil
   end
@@ -342,7 +346,7 @@ trip_updates =
   |> Stream.map(&GlidesReport.TripUpdate.normalize_stop_ids/1)
   # Filter each trip update's stop_time_update list.
   # If filtered list is empty for any trip update, the trip update is removed entirely.
-  |> Stream.map(&GlidesReport.TripUpdate.filter_stops(&1, filter_settings.stop_ids))
+  |> Stream.map(&GlidesReport.TripUpdate.filter_terminals(&1, filter_settings.terminal_ids))
   |> Stream.reject(&is_nil/1)
   |> Stream.map(
     &GlidesReport.TripUpdate.filter_by_advance_notice(&1, filter_settings.min_advance_notice_sec)
@@ -354,13 +358,13 @@ trip_updates =
   |> Stream.flat_map(fn tr_upd ->
     Enum.map(
       tr_upd.trip_update.stop_time_update,
-      &Departure.new(tr_upd.trip_update.trip.trip_id, &1.stop_id, &1.departure.time)
+      &Departure.new(tr_upd.trip_update.trip.trip_id, &1.terminal_id, &1.departure.time)
     )
   end)
   # Apply the "appeared on countdown clocks" filter, if it's enabled.
   |> then(fn stream ->
     if not is_nil(top_twos) do
-      Stream.filter(stream, &({&1.stop, &1.timestamp} in top_twos))
+      Stream.filter(stream, &({&1.terminal, &1.timestamp} in top_twos))
     else
       stream
     end
@@ -377,9 +381,9 @@ vehicle_positions =
   :VehiclePositions
   |> GlidesReport.Util.stream_values()
   |> Stream.map(&GlidesReport.VehiclePosition.normalize_stop_id/1)
-  |> Stream.filter(&(&1.vehicle.stop_id in filter_settings.stop_ids))
+  |> Stream.filter(&(&1.vehicle.terminal_id in filter_settings.terminal_ids))
   |> GlidesReport.VehiclePosition.dedup_statuses()
-  |> Stream.map(&Departure.new(&1.vehicle.trip.trip_id, &1.vehicle.stop_id, &1.vehicle.timestamp))
+  |> Stream.map(&Departure.new(&1.vehicle.trip.trip_id, &1.vehicle.terminal_id, &1.vehicle.timestamp))
   |> Enum.to_list()
 
 Kino.nothing()
@@ -391,18 +395,18 @@ Compute sets of predicted departure times and sets of actual departure times,
 predictions_by_hour = Enum.group_by(trip_updates, &(&1.hour))
 departures_by_hour = Enum.group_by(vehicle_positions, &(&1.hour))
 
-#################################################
-# Departure/prediction metrics by stop and time #
-# (Gives the rider's perspective)               #
-#################################################
+#####################################################
+# Departure/prediction metrics by terminal and time #
+# (Gives the rider's perspective)                   #
+#####################################################
 predicted_times_by_hour =
   Map.new(predictions_by_hour, fn {hour, departures} ->
-    {hour, MapSet.new(departures, &{&1.stop, &1.minute})}
+    {hour, MapSet.new(departures, &{&1.terminal, &1.minute})}
   end)
 
 actual_times_by_hour =
   Map.new(departures_by_hour, fn {hour, departures} ->
-    {hour, MapSet.new(departures, &{&1.stop, &1.minute})}
+    {hour, MapSet.new(departures, &{&1.terminal, &1.minute})}
   end)
 
 predicted_time_percentages_by_hour =
@@ -427,18 +431,18 @@ predicted_time_percentages_by_hour =
     {hour, percentage}
   end)
 
-#################################################
-# Departure/prediction metrics by stop and trip #
-# (A more internal performance metric)          #
-#################################################
+#####################################################
+# Departure/prediction metrics by terminal and trip #
+# (A more internal performance metric)              #
+#####################################################
 predicted_trips_by_hour =
   Map.new(predictions_by_hour, fn {hour, departures} ->
-    {hour, MapSet.new(departures, &{&1.stop, &1.trip})}
+    {hour, MapSet.new(departures, &{&1.terminal, &1.trip})}
   end)
 
 actual_trips_by_hour =
   Map.new(departures_by_hour, fn {hour, departures} ->
-    {hour, MapSet.new(departures, &{&1.stop, &1.trip})}
+    {hour, MapSet.new(departures, &{&1.terminal, &1.trip})}
   end)
 
 predicted_trip_percentages_by_hour =
@@ -448,7 +452,7 @@ predicted_trip_percentages_by_hour =
 
     actual_trip_count = MapSet.size(actual_trips)
 
-    # Number of departures (represented as stop X trip)
+    # Number of departures (represented as terminal X trip)
     # that were both predicted and actually happened.
     actual_AND_predicted_trip_count =
       MapSet.intersection(predicted_trips, actual_trips)
@@ -484,6 +488,8 @@ Methodology:
 [^2]: This is the set of _all_ times at which a vehicle was predicted to depart a stop. If at any moment, even just for a minute, a vehicle was predicted to depart stop S at time T, then that `{time, stop}` pair is added to the set.
 
 ```elixir
+service_day = to_string(DateTime.to_date(loader_settings.start_dt))
+
 times_table =
   0..23
   # Service day starts at 4am, so let's start the table at that hour.
@@ -502,6 +508,7 @@ times_table =
     time_percentage = Map.fetch!(predicted_time_percentages_by_hour, hour)
 
     [
+      {"service day", service_day},
       {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
       {"# of predicted departure times", predicted_time_count},
       {"# of actual departure times", actual_time_count},
@@ -527,6 +534,7 @@ trips_table =
     trip_percentage = Map.fetch!(predicted_trip_percentages_by_hour, hour)
 
     [
+      {"service day", service_day},
       {"hour", "#{GlidesReport.Util.zero_pad(hour)}:00"},
       {"# of predicted departures collapsed by trip", predicted_trip_count},
       {"# of actual departures collapsed by trip", actual_trip_count},
@@ -569,4 +577,4 @@ Kino.Download.new(
 Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":19407,"stamp":{"token":"XCP.0bc84sDOs5zFXN5CwioIeyNlJgq8iWyBmTe574h5aUXCdsggE9YZVu9e2PY8pXpmkR8dAJL95hzDVG1MqEm6nEsYC4JFDE0J9V_OhNxRqfQpvLV-ylIt1h9-E-w42XMA2pUxbUtbAIyN3tWLx1KvxZgOnUD_wQ","version":2}} -->
+<!-- livebook:{"offset":20596,"stamp":{"token":"XCP.BKAK1tf_QQVOx2dteyKPez26YgEHm2TDMrZnbkcniLftlVgYcymLsMpyjkCTUuEQ3N92MnXOfyzr3JwyfsVGVZkYlb_sJI9nGeloOL7bCSl4rwCLx1DIY_tok0KeV7j9aw6VBZRjDXxCHHnK8LIoXB8PT2owOQ","version":2}} -->

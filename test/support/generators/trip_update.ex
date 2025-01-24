@@ -5,7 +5,7 @@ defmodule TransitData.GlidesReport.Generators.TripUpdate do
 
   import StreamData
   import ExUnitProperties, only: [gen: 2]
-  alias TransitData.GlidesReport.Terminals
+  alias TransitData.GlidesReport.Terminal
 
   # (Ignore first item, it keeps the formatter from moving the first comment)
   @type trip_update_gen_opt ::
@@ -265,7 +265,7 @@ defmodule TransitData.GlidesReport.Generators.TripUpdate do
   end
 
   defp terminal_stop_id_generator do
-    member_of(Terminals.all_first_stops())
+    member_of(Terminal.all_first_stops())
   end
 
   # Never produces Glides terminal stop IDs.
@@ -273,7 +273,7 @@ defmodule TransitData.GlidesReport.Generators.TripUpdate do
     gen all(
           i <- integer(70_000..79_999//1),
           id = Integer.to_string(i),
-          id not in Terminals.all_first_stops()
+          id not in Terminal.all_first_stops()
         ) do
       id
     end

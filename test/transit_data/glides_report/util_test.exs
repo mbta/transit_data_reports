@@ -72,17 +72,17 @@ defmodule TransitData.GlidesReport.UtilTest do
   describe "build_csv_name/3" do
     test "creates a descriptive filename for the table download" do
       alias TransitData.GlidesReport.Settings.{Filter, Load}
-      alias TransitData.GlidesReport.Terminals
+      alias TransitData.GlidesReport.Terminal
 
       table_name = "The Results"
       loader_settings = Load.new("", ~D[2024-08-05], 1, nil)
 
       filter_settings =
-        Filter.new(Terminals.by_tags([:glides, :green]), true, nil)
+        Filter.new(Terminal.by_tags([:green]), true, nil)
 
       expected =
         "Glides report - The Results - " <>
-          "prod,2024-08-05T04:00-2024-08-06T03:59,stops=All Green Line terminal stops," <>
+          "prod,2024-08-05T04:00-2024-08-06T03:59,terminals=Green Line," <>
           "next 2 predictions only,sampling=ALLper1min.csv"
 
       assert expected == Util.build_csv_name(table_name, loader_settings, filter_settings)

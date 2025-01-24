@@ -38,6 +38,7 @@ defmodule TransitData.MixProject do
       {:ex_aws_s3, "~> 2.5"},
       {:hackney, "~> 1.20"},
       {:jaxon, "~> 2.0"},
+      {:kino, "~> 0.12.0"},
       {:stream_gzip, "~> 0.4.2"},
       {:sweet_xml, "~> 0.7.4"},
       # TEST-ENV DEPS
