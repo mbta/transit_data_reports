@@ -47,22 +47,6 @@ defmodule TransitData.GlidesReport.UtilTest do
     end
   end
 
-  describe "unix_timestamp_to_local_hour/1" do
-    test "returns local hour value of timestamp" do
-      dt = DateTime.from_naive!(~N[2024-08-06T15:48:20], "America/New_York")
-      timestamp = DateTime.to_unix(dt)
-      assert 15 == Util.unix_timestamp_to_local_hour(timestamp)
-    end
-  end
-
-  describe "unix_timestamp_to_local_minute/1" do
-    test "returns local minute value of timestamp" do
-      dt = DateTime.from_naive!(~N[2024-08-06T15:48:20], "America/New_York")
-      timestamp = DateTime.to_unix(dt)
-      assert 48 == Util.unix_timestamp_to_local_minute(timestamp)
-    end
-  end
-
   describe "dataset_dir/0" do
     test "returns dataset directory" do
       assert String.ends_with?(Util.dataset_dir(), "transit_data_reports/dataset")
@@ -75,14 +59,14 @@ defmodule TransitData.GlidesReport.UtilTest do
       alias TransitData.GlidesReport.Terminal
 
       table_name = "The Results"
-      loader_settings = Load.new("", ~D[2024-08-05], 1, nil)
+      loader_settings = Load.new("", ~D[2024-08-05], ~D[2024-08-06], 1, nil)
 
       filter_settings =
         Filter.new(Terminal.by_tags([:green]), true, nil)
 
       expected =
         "Glides report - The Results - " <>
-          "prod,2024-08-05T04:00-2024-08-06T03:59,terminals=Green Line," <>
+          "prod,2024-08-05 to 2024-08-06,terminals=Green Line," <>
           "next 2 predictions only,sampling=ALLper1min.csv"
 
       assert expected == Util.build_csv_name(table_name, loader_settings, filter_settings)

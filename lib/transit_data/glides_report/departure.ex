@@ -6,27 +6,26 @@ defmodule TransitData.GlidesReport.Departure do
 
   alias TransitData.GlidesReport.Spec.Common
   alias TransitData.GlidesReport.Terminal
-  alias TransitData.GlidesReport.Util
 
   @type t :: %__MODULE__{
           trip: Common.trip_id(),
           terminal: Terminal.id(),
           timestamp: Common.timestamp(),
-          # Hour part of the timestamp (in Eastern TZ)
-          hour: 0..23,
-          # Minute part of the timestamp
-          minute: 0..59
+          # `timestamp` as a DateTime in Eastern time, truncated to minutes
+          local_dt: DateTime.t()
         }
 
-  @type minute :: 0..59
-
-  @enforce_keys [:trip, :terminal, :timestamp, :hour, :minute]
+  @enforce_keys [:trip, :terminal, :timestamp, :local_dt]
   defstruct @enforce_keys
 
   @spec new(Common.trip_id(), Terminal.id(), Common.timestamp()) :: t()
   def new(trip, {:terminal, _} = terminal, timestamp) do
-    hour = Util.unix_timestamp_to_local_hour(timestamp)
-    minute = Util.unix_timestamp_to_local_minute(timestamp)
-    %__MODULE__{trip: trip, terminal: terminal, timestamp: timestamp, hour: hour, minute: minute}
+    local_dt =
+      timestamp
+      |> DateTime.from_unix!()
+      |> DateTime.shift_zone!("America/New_York")
+      |> then(&%{&1 | second: 0, microsecond: {0, 0}})
+
+    %__MODULE__{trip: trip, terminal: terminal, timestamp: timestamp, local_dt: local_dt}
   end
 end
