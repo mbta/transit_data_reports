@@ -474,6 +474,19 @@ Kino.Download.new(
 Kino.DataTable.new(table, name: table_name)
 ```
 
+### About this table
+
+| Column                             | Description                                                                                                                        |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| service day                        | Service day analyzed by this row.                                                                                                  |
+| hour                               | Hour within the service day analyzed by this row.                                                                                  |
+| # predictions                      | Total number of predictions generated during this hour.[^1]                                                                        |
+| # departures                       | Total number of departures that occurred during this hour.                                                                         |
+| #&nbsp;accurate&nbsp;(±&nbsp;`N`) | Number of predictions generated during this hour, whose predicted times were within `N` minutes of a departure from the same stop. |
+| %&nbsp;accurate&nbsp;(±&nbsp;`N`) | equal to \[# accurate (± `N`)] / \[# predictions]                                                                                 |
+
+[^1]: Predictions with the same trip, stop, and predicted minute of departure are considered equivalent and counted once.
+
 ```elixir
 overall_prediction_count = MapSet.size(MapSet.new(trip_updates))
 
@@ -512,4 +525,4 @@ VegaLite.new(width: 500, height: 300, title: "Percent accurate by bucket size")
 |> VegaLite.encode_field(:y, "Accuracy (% of total predictions)", type: :quantitative)
 ```
 
-<!-- livebook:{"offset":19761,"stamp":{"token":"XCP.BG_myMHEskx4F8SRr5BPyZtm5069wc0p03WVFuaN_ld151g-4IsQQcdu8XGyNWikmFk47SuVeJAgR5UahSVHfcMbmvF_Kqjbfbr5wqhKqSaGtG1hl6dkOl9PmRYhBJ2U-59RTmH3ormMLF8QJ0nwyyuahwOIxQ","version":2}} -->
+<!-- livebook:{"offset":21271,"stamp":{"token":"XCP.elthjGcmLMDOOP8S5_AEntROw-xR97VQ3FhWU1BpBhTpZym9jrqCIUpn644r871OCyo7o56lSO3ynF0JRLvC55KqsdmeRIjNTLfyIQ9QzseZUQwQ9SFb_stu4nx5W_kXmP3JpL2yWcz_juHk6POY088UgnaoEw","version":2}} -->

@@ -463,4 +463,31 @@ Kino.Download.new(
 Kino.DataTable.new(trips_table, name: trips_table_name)
 ```
 
-<!-- livebook:{"offset":18057,"stamp":{"token":"XCP.P1RXA3OhsOCzDL5M6_anNmpDf0eNkmSA-4IgszBgahoh87mnUfssAOj4JHH69lL_a1OvElZO9Oj7OodE4x79EQFp_1UMnsUmXnn84nfPWxSLRtplh6GkbUC6fGHTKfgqXyICazz7smf6-Tlk7toQDOyAw8v_7A","version":2}} -->
+### About these tables
+
+#### Predicted vs actual departures
+
+For this table, predictions and departures were compared only on stop and time--_not_ trip.
+
+| Column                                               | Description                                                                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| service day                                          | Service day analyzed by this row.                                                                           |
+| hour                                                 | Hour within the service day analyzed by this row.                                                           |
+| # of predicted departure times                       | Total number of predictions generated for this hour.[^1]                                                    |
+| # of actual departure times                          | Total number of actual departures that occurred during this hour.[^1]                                       |
+| % of actual departure times that were also predicted | equal to (number of actual departures that had a matching prediction) / (total number of actual departures) |
+
+#### Predicted vs actual trips
+
+For this table, predictions and departures were compared only on stop and trip--_not_ time.
+
+| Column                                      | Description                                                                                                 |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| service day                                 | Service day analyzed by this row.                                                                           |
+| hour                                        | Hour within the service day analyzed by this row.                                                           |
+| # of predicted departures collapsed by trip | Total number of predictions generated for this hour.[^2]                                                    |
+| # of actual departures collapsed by trip    | Total number of actual departures that occurred during this hour.[^2]                                       |
+| % of predicted departures collapsed by trip | equal to (number of actual departures that had a matching prediction) / (total number of actual departures) |
+
+[^1]: Values are compared by `(stop, minute)`. Two predictions are considered equivalent, and counted once, if they are for the same stop and minute. Two actual departures are considered equivalent, and counted once, if they are for the same stop and minute.
+[^2]: Values are compared by `(stop, trip)`. Two predictions are considered equivalent, and counted once, if they are for the same stop and trip. Two actual departures are considered equivalent, and counted once, if they are for the same stop and trip.
