@@ -180,7 +180,7 @@ Kino.nothing()
 
 ```elixir
 {terminals, groups} = GlidesReport.Terminal.all_labeled_terminals_and_groups()
-terminal_ids_input = TransitData.GlidesReport.TerminalSelection.new(terminals, groups)
+terminal_ids_input = GlidesReport.TerminalSelection.new(terminals, groups)
 
 limit_to_next_2_predictions_input = Kino.Input.checkbox("Simulate countdown clocks?")
 
