@@ -100,22 +100,6 @@ defmodule TransitData.GlidesReport.Util do
     "#{p}%"
   end
 
-  @spec unix_timestamp_to_local_hour(integer) :: 0..23
-  def unix_timestamp_to_local_hour(timestamp) do
-    unix_timestamp_to_local_datetime(timestamp).hour
-  end
-
-  @spec unix_timestamp_to_local_hour(integer) :: 0..59
-  def unix_timestamp_to_local_minute(timestamp) do
-    unix_timestamp_to_local_datetime(timestamp).minute
-  end
-
-  defp unix_timestamp_to_local_datetime(timestamp) do
-    timestamp
-    |> DateTime.from_unix!()
-    |> DateTime.shift_zone!("America/New_York")
-  end
-
   @doc """
   Returns /absolute/path/to/transit_data_reports/dataset.
   """
@@ -154,8 +138,8 @@ defmodule TransitData.GlidesReport.Util do
   def build_csv_name(table_name, loader_settings, filter_settings) do
     %{
       env_suffix: env_suffix,
-      start_dt: start_dt,
-      end_dt: end_dt,
+      start_date: start_date,
+      end_date: end_date,
       sample_rate: sample_rate,
       sample_count: sample_count
     } = loader_settings
@@ -168,12 +152,9 @@ defmodule TransitData.GlidesReport.Util do
     env = if env_suffix == "", do: "prod", else: String.slice(env_suffix, 1..-1//1)
 
     dt_range =
-      [start_dt, end_dt]
-      |> Enum.map(&DateTime.shift_zone!(&1, "America/New_York"))
-      |> Enum.map_join(
-        "-",
-        &(&1 |> DateTime.shift_zone!("America/New_York") |> Calendar.strftime("%xT%H:%M"))
-      )
+      if Date.compare(start_date, end_date) == :eq,
+        do: "#{start_date}",
+        else: "#{start_date} to #{end_date}"
 
     terminals_filter =
       Enum.find_value(Terminal.labeled_terminal_groups(), fn {_id, label, terminals_in_group} ->

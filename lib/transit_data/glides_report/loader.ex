@@ -10,17 +10,12 @@ defmodule TransitData.GlidesReport.Loader do
 
   @doc """
   Loads data into ETS tables, and returns counts of files found locally vs downloaded.
-
-  `start_dt` and `end_dt` are NaiveDateTimes assumed to be in UTC.
   """
-  @spec load_data(
-          NaiveDateTime.t(),
-          NaiveDateTime.t(),
-          String.t(),
-          pos_integer,
-          pos_integer | :all
-        ) :: %{local: non_neg_integer, downloaded: non_neg_integer}
-  def load_data(start_dt, end_dt, env_suffix, sample_rate, sample_count) do
+  @spec load_data(Date.t(), Date.t(), String.t(), pos_integer, pos_integer | :all) :: %{
+          local: non_neg_integer,
+          downloaded: non_neg_integer
+        }
+  def load_data(start_date, end_date, env_suffix, sample_rate, sample_count) do
     dir = local_dir(env_suffix)
 
     IO.puts(
@@ -35,17 +30,24 @@ defmodule TransitData.GlidesReport.Loader do
 
     s3_bucket = "mbta-gtfs-s3#{env_suffix}"
 
-    start_dt_utc = DateTime.from_naive!(start_dt, "Etc/UTC")
-    end_dt_utc = DateTime.from_naive!(end_dt, "Etc/UTC")
+    start_dt =
+      DateTime.new!(start_date, ~T[04:00:00], "America/New_York")
+      |> DateTime.shift_zone!("Etc/UTC")
 
-    total_minutes = DateTime.diff(end_dt_utc, start_dt_utc, :minute)
-    total_increments = div(total_minutes, sample_rate)
+    end_dt =
+      end_date
+      # The service day ends on the following calendar date.
+      |> Date.shift(day: 1)
+      |> DateTime.new!(~T[03:59:59], "America/New_York")
+      |> DateTime.shift_zone!("Etc/UTC")
+
+    total_minutes = DateTime.diff(end_dt, start_dt, :minute)
 
     # Prefixes used to list S3 objects timestamped within the same minute.
     minute_prefixes =
-      Enum.map(0..total_increments, fn increment ->
-        start_dt_utc
-        |> DateTime.add(increment * sample_rate, :minute)
+      Enum.map(0..total_minutes//sample_rate, fn increment ->
+        start_dt
+        |> DateTime.add(increment, :minute)
         |> Calendar.strftime("%Y/%m/%d/%Y-%m-%dT%H:%M")
       end)
 
@@ -68,27 +70,19 @@ defmodule TransitData.GlidesReport.Loader do
   end
 
   # Loads data into a table.
-  # Returns the number of files that were found locally,
-  # the number that were newly downloaded,
-  # and a list of minutes for which not enough data could be found.
+  # Returns the number of files that were found locally and the number
+  # that were newly downloaded:
+  # %{local: integer, downloaded: integer}
   defp populate_table(table_name, path_prefixes, s3_bucket, sample_count) do
     IO.puts("Loading #{table_name}...")
 
+    prefix_count = length(path_prefixes)
+
     {total, insufficients} =
       path_prefixes
-      |> Stream.with_index(fn prefix, i ->
-        IO.write([
-          IO.ANSI.clear_line(),
-          "\r",
-          moons_of_progress()[rem(i, 8)],
-          " Loading data for ",
-          prefix_to_local_minute(prefix)
-        ])
-
-        prefix
-      end)
+      |> Stream.with_index(&update_progress(&1, &2, prefix_count))
       |> Task.async_stream(
-        &load_minute(&1, s3_bucket, table_name, sample_count),
+        fn prefix -> load_minute(prefix, s3_bucket, table_name, sample_count) end,
         ordered: false,
         timeout: 60_000
       )
@@ -101,7 +95,7 @@ defmodule TransitData.GlidesReport.Loader do
 
         insufficients =
           if is_integer(sample_count) and counts.local + counts.downloaded < sample_count,
-            do: [prefix_to_local_minute(counts.prefix) | insufficients],
+            do: [prefix_to_local_dt(counts.prefix) | insufficients],
             else: insufficients
 
         {total, insufficients}
@@ -110,20 +104,8 @@ defmodule TransitData.GlidesReport.Loader do
     IO.puts("#{IO.ANSI.clear_line()}\r🌝 Done")
 
     unless Enum.empty?(insufficients) do
-      time_ranges =
-        insufficients
-        |> Enum.sort()
-        |> Enum.split_while(&(&1 < "04"))
-        |> then(fn {after_midnight_service_day, service_day} ->
-          service_day ++ after_midnight_service_day
-        end)
-        |> Stream.map(&Time.from_iso8601!(&1 <> ":00"))
-        # Chunk the individual times into ranges of consecutive times for better human readability.
-        |> Stream.chunk_while(nil, &chunk_time_ranges/2, &{:cont, hh_mm_range(&1), nil})
-        |> Stream.reject(&is_nil/1)
-        |> Enum.join(", ")
-
-      IO.puts("#{table_name}: Insufficient data available for minute(s): #{time_ranges}")
+      time_ranges = datetimes_to_time_ranges(insufficients)
+      IO.puts("#{table_name}: Insufficient data available for minute(s):\n#{time_ranges}")
     end
 
     IO.puts("")
@@ -139,9 +121,58 @@ defmodule TransitData.GlidesReport.Loader do
     """x
   end
 
+  defp update_progress(prefix, i, total) do
+    pct =
+      (100 * i / total)
+      |> trunc()
+      |> Integer.to_string()
+      |> String.pad_leading(3)
+
+    IO.write([
+      IO.ANSI.clear_line(),
+      "\r",
+      moons_of_progress()[rem(i, 8)],
+      " Loading data for ",
+      Calendar.strftime(prefix_to_local_dt(prefix), "%x %H:%M"),
+      "  ",
+      pct,
+      "%"
+    ])
+
+    prefix
+  end
+
   # 🌝
   defp moons_of_progress do
     %{0 => "🌕", 1 => "🌖", 2 => "🌗", 3 => "🌘", 4 => "🌑", 5 => "🌒", 6 => "🌓", 7 => "🌔"}
+  end
+
+  @doc ~S'''
+  Returns a human-readable string describing a list of minute-granularity
+  local-timezone DateTimes as comma-separated time ranges.
+
+      iex> [~U[2025-01-01T18:00:00Z], ~U[2025-01-01T18:01:00Z], ~U[2025-01-02T08:03:00Z], ~U[2025-01-02T12:00:00Z]]
+      ...> |> Enum.map(&DateTime.shift_zone!(&1, "America/New_York"))
+      ...> |> datetimes_to_time_ranges()
+      """
+      • 2025-01-01: 13:00-13:01, 03:03
+      • 2025-01-02: 07:00\
+      """
+  '''
+  def datetimes_to_time_ranges(datetimes) do
+    datetimes
+    |> Enum.sort(DateTime)
+    |> Stream.chunk_by(&service_day/1)
+    |> Stream.map(fn dts ->
+      time_ranges =
+        dts
+        |> Stream.map(fn %DateTime{time_zone: "America/New_York"} = dt -> DateTime.to_time(dt) end)
+        |> Stream.chunk_while(nil, &chunk_time_ranges/2, &{:cont, hh_mm_range(&1), nil})
+        |> Enum.join(", ")
+
+      "• #{service_day(hd(dts))}: #{time_ranges}"
+    end)
+    |> Enum.join("\n")
   end
 
   defp chunk_time_ranges(time, nil) do
@@ -182,11 +213,10 @@ defmodule TransitData.GlidesReport.Loader do
 
   defp hh_mm(time), do: Calendar.strftime(time, "%H:%M")
 
-  defp prefix_to_local_minute(prefix) do
+  defp prefix_to_local_dt(prefix) do
     prefix
     |> prefix_to_dt()
     |> DateTime.shift_zone!("America/New_York")
-    |> Calendar.strftime("%H:%M")
   end
 
   defp prefix_to_dt(prefix) do
@@ -197,6 +227,23 @@ defmodule TransitData.GlidesReport.Loader do
       |> DateTime.from_iso8601()
 
     dt
+  end
+
+  def service_day(%{time_zone: "America/New_York"} = dt) do
+    # Service day starts at 4am.
+    # Times before that on a calendar date are part of the previous
+    # calendar date's service day.
+    if dt.hour >= 4 do
+      DateTime.to_date(dt)
+    else
+      dt |> DateTime.to_date() |> Date.add(-1)
+    end
+  end
+
+  def service_day(%DateTime{} = dt) do
+    dt
+    |> DateTime.shift_zone!("America/New_York")
+    |> service_day()
   end
 
   # Loads data for a specific minute of the service day, either by reading existing local files,

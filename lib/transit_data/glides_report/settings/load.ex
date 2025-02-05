@@ -5,32 +5,20 @@ defmodule TransitData.GlidesReport.Settings.Load do
 
   @type t :: %__MODULE__{
           env_suffix: String.t(),
-          start_dt: DateTime.t(),
-          end_dt: DateTime.t(),
-          sample_rate: integer,
-          sample_count: integer | :all
+          start_date: Date.t(),
+          end_date: Date.t(),
+          sample_rate: pos_integer,
+          sample_count: pos_integer | :all
         }
 
-  defstruct [
-    :env_suffix,
-    :start_dt,
-    :end_dt,
-    :sample_rate,
-    :sample_count
-  ]
+  defstruct [:env_suffix, :start_date, :end_date, :sample_rate, :sample_count]
 
-  @spec new(String.t(), Date.t(), integer, integer | nil) :: t()
-  def new(env, date, sample_rate, samples_per_minute) do
-    {start_dt, end_dt} = date_to_start_end_dt(date)
-    new(env, start_dt, end_dt, sample_rate, samples_per_minute)
-  end
-
-  @spec new(String.t(), DateTime.t(), DateTime.t(), integer, integer | nil) :: t()
-  def new(env, start_dt, end_dt, sample_rate, samples_per_minute) do
+  @spec new(String.t(), Date.t(), Date.t(), integer, integer | nil) :: t()
+  def new(env, start_date, end_date, sample_rate, samples_per_minute) do
     %__MODULE__{
       env_suffix: env,
-      start_dt: start_dt,
-      end_dt: end_dt,
+      start_date: start_date,
+      end_date: end_date,
       sample_rate: sample_rate |> trunc(),
       sample_count:
         case samples_per_minute do
@@ -38,21 +26,5 @@ defmodule TransitData.GlidesReport.Settings.Load do
           n -> trunc(n)
         end
     }
-  end
-
-  defp date_to_start_end_dt(date) do
-    # We assume they want a full service day on the given date.
-    start_dt =
-      date
-      |> DateTime.new!(~T[04:00:00], "America/New_York")
-      |> DateTime.shift_zone!("Etc/UTC")
-
-    end_dt =
-      date
-      |> Date.add(1)
-      |> DateTime.new!(~T[03:59:59], "America/New_York")
-      |> DateTime.shift_zone!("Etc/UTC")
-
-    {start_dt, end_dt}
   end
 end
