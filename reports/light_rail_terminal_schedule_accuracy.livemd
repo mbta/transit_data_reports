@@ -1,0 +1,89 @@
+<!-- livebook:{"file_entries":[{"name":"2024-08-12-subway-on-time-performance-v1.parquet","type":"url","url":"https://performancedata.mbta.com/lamp/subway-on-time-performance-v1/2024-08-12-subway-on-time-performance-v1.parquet"},{"name":"2024-08-13-subway-on-time-performance-v1.parquet","type":"url","url":"https://performancedata.mbta.com/lamp/subway-on-time-performance-v1/2024-08-13-subway-on-time-performance-v1.parquet"},{"name":"2024-08-14-subway-on-time-performance-v1.parquet","type":"url","url":"https://performancedata.mbta.com/lamp/subway-on-time-performance-v1/2024-08-14-subway-on-time-performance-v1.parquet"},{"name":"2024-08-15-subway-on-time-performance-v1.parquet","type":"url","url":"https://performancedata.mbta.com/lamp/subway-on-time-performance-v1/2024-08-15-subway-on-time-performance-v1.parquet"},{"name":"2024-08-16-subway-on-time-performance-v1.parquet","type":"url","url":"https://performancedata.mbta.com/lamp/subway-on-time-performance-v1/2024-08-16-subway-on-time-performance-v1.parquet"}]} -->
+
+# Light Rail Terminal Schedule Accuracy
+
+```elixir
+Mix.install([
+  {:explorer, "~> 0.9.1"},
+  {:kino, "~> 0.13.2"}
+])
+
+```
+
+## Grab All The Data
+
+```elixir
+require Explorer.DataFrame, as: DF
+alias Explorer.Series
+
+# one business week, starting 2024-08-12
+start_date = ~D[2024-08-12]
+range = 0..4
+files = for add <- range do
+  date = Date.add(start_date, add)
+  "#{Date.to_iso8601(date)}-subway-on-time-performance-v1.parquet"
+end
+
+df = files
+|> Enum.map(&DF.from_parquet!(Kino.FS.file_path(&1)))
+|> DF.concat_rows()
+Kino.DataTable.new(df)
+```
+
+```elixir
+require DF
+
+service_date_epoch = df["service_date"]
+|> Series.cast(:string)
+|> Series.strptime("%Y%m%d")
+|> Series.cast(:integer)
+|> Series.quotient(1000000)
+
+dst_offset = -4 * 3600
+
+df = DF.put(df, :service_date_epoch, service_date_epoch)
+df = DF.put(df, :scheduled_timestamp, Series.add(df["service_date_epoch"], Series.subtract(df["scheduled_departure_time"], dst_offset)))
+df = DF.put(df, :diff, Series.subtract(df["stop_timestamp"], df["scheduled_timestamp"]))
+df = DF.mutate(df, stop_timestamp: cast(stop_timestamp * 1000, {:naive_datetime, :millisecond}), scheduled_timestamp: cast(scheduled_timestamp * 1000, {:naive_datetime, :millisecond}))
+df = DF.filter(df, trunk_route_id == "Green" and parent_station in ["place-lake", "place-clmnl", "place-river", "place-hsmnl", "place-unsqu", "place-mdftf"])
+df = DF.mutate(df, is_accurate: diff > -90 and diff < 30)
+df
+|> DF.select(["trip_id", "parent_station", "stop_sequence", "move_timestamp", "stop_timestamp", "scheduled_timestamp", "diff", "is_accurate"])
+|> DF.sort_by([asc: trip_id, asc: scheduled_timestamp])
+|> Kino.DataTable.new()
+
+```
+
+## Overall Accuracy
+
+Values are in seconds. Negative values are departures earlier than the schedule; positive values are after the schedule.
+
+```elixir
+df
+|> DF.summarise(count: count(diff), nil_count: nil_count(diff), accurate_count: cast(sum(is_accurate), {:u, 32}), mean: mean(diff), std: standard_deviation(diff), p25: quantile(diff, 0.25), p50: median(diff), p75: quantile(diff, 0.75))
+|> DF.mutate(nil_pct: nil_count / count, accurate_pct: accurate_count / count)
+|> Kino.DataTable.new()
+```
+
+## Accuracy by Terminal
+
+Values are in seconds. Negative values are departures earlier than the schedule; positive values are after the schedule.
+
+```elixir
+df
+|> DF.group_by(:parent_station)
+|> DF.summarise(count: count(diff), nil_count: nil_count(diff), accurate_count: cast(sum(is_accurate), {:u, 32}), mean: mean(diff), std: standard_deviation(diff), p25: quantile(diff, 0.25), p50: median(diff), p75: quantile(diff, 0.75))
+|> DF.mutate(nil_pct: nil_count / count, accurate_pct: accurate_count / count)
+|> Kino.DataTable.new()
+```
+
+## Summary
+
+* 9.2% of schedules would be considered "accurate" (30 seconds earlier than actual to 90 seconds later than actual)
+* half of all trains leave more than 4.5 minutes earlier than the schedule
+* a quarter of trains leave later than the schedule
+* Union Square is the least accurate:
+  * half of trains leave more than 20 minutes earlier than the schedule
+  * 40% of departures not matching the schedule at all
+  * 3.1% accuracy
+* Boston College is the most variable, with a standard deviation of 36 minutes
